@@ -1,0 +1,35 @@
+# A simple bookshelf: 36" wide, 30" tall, 12" deep, 2 shelves.
+# This is the "hello world" for cabinet-maker.
+
+[project]
+name = "Simple Bookshelf"
+units = "inches"
+
+[material]
+name = "3/4\" Birch Plywood"
+thickness = 0.75
+sheet_width = 48.0
+sheet_length = 96.0
+material_type = "plywood"
+
+[cabinet]
+name = "bookshelf"
+cabinet_type = "basic_box"
+width = 36.0
+height = 30.0
+depth = 12.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 2
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+
+[[tools]]
+number = 1
+tool_type = "endmill"
+diameter = 0.25
+flutes = 2
+cutting_length = 1.0
+description = "1/4\" 2-flute upcut endmill"

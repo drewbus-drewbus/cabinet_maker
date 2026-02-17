@@ -1,0 +1,19 @@
+[package]
+name = "cm-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI tool: TOML project definition to G-code output"
+
+[[bin]]
+name = "cabinet-maker"
+path = "src/main.rs"
+
+[dependencies]
+cm-core = { workspace = true }
+cm-cabinet = { workspace = true }
+cm-cam = { workspace = true }
+cm-post = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+serde = { workspace = true }
+toml = { workspace = true }

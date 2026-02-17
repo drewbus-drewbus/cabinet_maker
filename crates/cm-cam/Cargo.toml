@@ -1,0 +1,10 @@
+[package]
+name = "cm-cam"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CAM toolpath generation for woodworking operations"
+
+[dependencies]
+cm-core = { workspace = true }
+thiserror = { workspace = true }

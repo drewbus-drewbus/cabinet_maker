@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cm-core",
+    "crates/cm-cabinet",
+    "crates/cm-cam",
+    "crates/cm-post",
+    "crates/cm-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+cm-core = { path = "crates/cm-core" }
+cm-cabinet = { path = "crates/cm-cabinet" }
+cm-cam = { path = "crates/cm-cam" }
+cm-post = { path = "crates/cm-post" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+thiserror = "2"

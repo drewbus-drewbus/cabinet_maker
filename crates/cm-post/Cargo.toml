@@ -1,0 +1,13 @@
+[package]
+name = "cm-post"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Post-processor engine: toolpaths to machine-specific G-code"
+
+[dependencies]
+cm-core = { workspace = true }
+cm-cam = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
