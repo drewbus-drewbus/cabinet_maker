@@ -118,6 +118,7 @@ dependencies = [
  "cm-cabinet",
  "cm-cam",
  "cm-core",
+ "cm-nesting",
  "cm-post",
  "serde",
  "toml",
@@ -129,6 +130,13 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "thiserror",
+]
+
+[[package]]
+name = "cm-nesting"
+version = "0.1.0"
+dependencies = [
+ "cm-core",
 ]
 
 [[package]]

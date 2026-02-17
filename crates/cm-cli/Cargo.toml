@@ -14,6 +14,7 @@ cm-core = { workspace = true }
 cm-cabinet = { workspace = true }
 cm-cam = { workspace = true }
 cm-post = { workspace = true }
+cm-nesting = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 serde = { workspace = true }
 toml = { workspace = true }
