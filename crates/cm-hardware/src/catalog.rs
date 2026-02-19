@@ -26,6 +26,12 @@ pub enum HardwareKind {
     ShelfPin(ShelfPinSpec),
     /// Drawer/door pull/knob.
     Pull(PullSpec),
+    /// Confirmat (Euro assembly) screw.
+    Confirmat(ConfirmatSpec),
+    /// Cam lock and bolt fastener.
+    CamLock(CamLockSpec),
+    /// Edge banding (tracking only — no boring pattern).
+    EdgeBand(EdgeBandSpec),
 }
 
 /// Specification for European concealed hinges (e.g., Blum Clip Top).
@@ -196,6 +202,126 @@ impl Default for PullSpec {
             hole_spacing: 3.0,
             hole_diameter: default_pull_hole_diameter(),
             through_hole: true,
+        }
+    }
+}
+
+/// Specification for confirmat (Euro assembly) screws.
+///
+/// Confirmat screws require a 5mm pilot through the face panel and a 7mm
+/// pilot into the edge of the mating panel, plus a 10mm counterbore for
+/// the screw head.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfirmatSpec {
+    /// Screw shank diameter (typically 7mm / 0.276").
+    #[serde(default = "default_confirmat_shank")]
+    pub screw_diameter: f64,
+    /// Head diameter for counterbore (typically 10mm / 0.394").
+    #[serde(default = "default_confirmat_head")]
+    pub head_diameter: f64,
+    /// Pilot hole diameter through face panel (typically 5mm / 0.197").
+    #[serde(default = "default_confirmat_pilot")]
+    pub pilot_diameter: f64,
+    /// Counterbore depth for screw head (typically 2mm / 0.079").
+    #[serde(default = "default_confirmat_counterbore_depth")]
+    pub counterbore_depth: f64,
+    /// Screw length / pilot depth into mating panel (typically 50mm / 1.969").
+    #[serde(default = "default_confirmat_depth")]
+    pub depth: f64,
+}
+
+fn default_confirmat_shank() -> f64 { 0.276 } // 7mm
+fn default_confirmat_head() -> f64 { 0.394 } // 10mm
+fn default_confirmat_pilot() -> f64 { 0.197 } // 5mm
+fn default_confirmat_counterbore_depth() -> f64 { 0.079 } // 2mm
+fn default_confirmat_depth() -> f64 { 1.969 } // 50mm
+
+impl Default for ConfirmatSpec {
+    fn default() -> Self {
+        Self {
+            screw_diameter: default_confirmat_shank(),
+            head_diameter: default_confirmat_head(),
+            pilot_diameter: default_confirmat_pilot(),
+            counterbore_depth: default_confirmat_counterbore_depth(),
+            depth: default_confirmat_depth(),
+        }
+    }
+}
+
+/// Specification for cam lock and bolt fastener (e.g., Rafix, Minifix).
+///
+/// Cam locks use a 15mm cam housing bored into the face of one panel
+/// and a 6mm bolt inserted through the edge of the mating panel.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CamLockSpec {
+    /// Cam housing bore diameter (typically 15mm / 0.591").
+    #[serde(default = "default_cam_diameter")]
+    pub cam_diameter: f64,
+    /// Cam housing bore depth (typically 12.5mm / 0.492").
+    #[serde(default = "default_cam_depth")]
+    pub cam_depth: f64,
+    /// Bolt hole diameter (typically 8mm / 0.315" clearance for 6mm bolt).
+    #[serde(default = "default_cam_bolt_hole")]
+    pub bolt_hole_diameter: f64,
+    /// Bolt length (typically 34mm / 1.339").
+    #[serde(default = "default_cam_bolt_length")]
+    pub bolt_length: f64,
+    /// Distance from panel edge to cam center (typically 34mm / 1.339").
+    #[serde(default = "default_cam_setback")]
+    pub cam_setback: f64,
+}
+
+fn default_cam_diameter() -> f64 { 0.591 } // 15mm
+fn default_cam_depth() -> f64 { 0.492 } // 12.5mm
+fn default_cam_bolt_hole() -> f64 { 0.315 } // 8mm
+fn default_cam_bolt_length() -> f64 { 1.339 } // 34mm
+fn default_cam_setback() -> f64 { 1.339 } // 34mm
+
+impl Default for CamLockSpec {
+    fn default() -> Self {
+        Self {
+            cam_diameter: default_cam_diameter(),
+            cam_depth: default_cam_depth(),
+            bolt_hole_diameter: default_cam_bolt_hole(),
+            bolt_length: default_cam_bolt_length(),
+            cam_setback: default_cam_setback(),
+        }
+    }
+}
+
+/// Edge banding specification (tracking only — does not generate boring patterns).
+///
+/// Used for BOM generation and material costing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EdgeBandSpec {
+    /// Band thickness (e.g., 0.5mm / 0.020" or 2mm / 0.079").
+    #[serde(default = "default_edge_band_thickness")]
+    pub thickness: f64,
+    /// Material type.
+    #[serde(default)]
+    pub material_type: EdgeBandMaterial,
+    /// Whether the banding is pre-glued (hot air application).
+    #[serde(default = "default_true")]
+    pub pre_glued: bool,
+}
+
+fn default_edge_band_thickness() -> f64 { 0.079 } // 2mm
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EdgeBandMaterial {
+    #[default]
+    Pvc,
+    Abs,
+    Wood,
+}
+
+impl Default for EdgeBandSpec {
+    fn default() -> Self {
+        Self {
+            thickness: default_edge_band_thickness(),
+            material_type: EdgeBandMaterial::Pvc,
+            pre_glued: true,
         }
     }
 }
@@ -378,6 +504,103 @@ impl HardwareApplicator {
         ops
     }
 
+    /// Generate confirmat screw bore on the face panel (pilot + counterbore).
+    ///
+    /// The face panel gets a pilot hole through it (for the screw shank) and
+    /// a shallow counterbore on the outside face for the screw head.
+    pub fn confirmat_bore(
+        spec: &ConfirmatSpec,
+        face_label: &str,
+        x: f64,
+        y: f64,
+        panel_thickness: f64,
+    ) -> Vec<HardwareOp> {
+        vec![
+            // Pilot hole through face panel
+            HardwareOp {
+                target_part: face_label.to_string(),
+                operation: PartOperation::Drill(DrillOp {
+                    x,
+                    y,
+                    diameter: spec.pilot_diameter,
+                    depth: panel_thickness,
+                }),
+                description: "confirmat pilot hole (through face panel)".to_string(),
+            },
+            // Counterbore for screw head on outside face
+            HardwareOp {
+                target_part: face_label.to_string(),
+                operation: PartOperation::Drill(DrillOp {
+                    x,
+                    y,
+                    diameter: spec.head_diameter,
+                    depth: spec.counterbore_depth,
+                }),
+                description: "confirmat head counterbore".to_string(),
+            },
+        ]
+    }
+
+    /// Generate confirmat screw pilot in the edge of the mating panel.
+    pub fn confirmat_edge_bore(
+        spec: &ConfirmatSpec,
+        edge_label: &str,
+        x: f64,
+        y: f64,
+    ) -> Vec<HardwareOp> {
+        vec![HardwareOp {
+            target_part: edge_label.to_string(),
+            operation: PartOperation::Drill(DrillOp {
+                x,
+                y,
+                diameter: spec.screw_diameter,
+                depth: spec.depth,
+            }),
+            description: "confirmat edge pilot hole".to_string(),
+        }]
+    }
+
+    /// Generate cam lock housing bore on a panel face.
+    ///
+    /// The cam bore is a 15mm pocket on the face of the panel that houses
+    /// the rotating cam. A bolt hole is drilled in the mating panel edge.
+    pub fn cam_lock_bore(
+        spec: &CamLockSpec,
+        face_label: &str,
+        x: f64,
+        y: f64,
+    ) -> Vec<HardwareOp> {
+        vec![HardwareOp {
+            target_part: face_label.to_string(),
+            operation: PartOperation::Drill(DrillOp {
+                x,
+                y,
+                diameter: spec.cam_diameter,
+                depth: spec.cam_depth,
+            }),
+            description: "cam lock housing bore (15mm)".to_string(),
+        }]
+    }
+
+    /// Generate cam lock bolt hole in the mating panel edge.
+    pub fn cam_lock_bolt_hole(
+        spec: &CamLockSpec,
+        edge_label: &str,
+        x: f64,
+        y: f64,
+    ) -> Vec<HardwareOp> {
+        vec![HardwareOp {
+            target_part: edge_label.to_string(),
+            operation: PartOperation::Drill(DrillOp {
+                x,
+                y,
+                diameter: spec.bolt_hole_diameter,
+                depth: spec.bolt_length,
+            }),
+            description: "cam lock bolt hole".to_string(),
+        }]
+    }
+
     /// Generate pull/knob holes on a door or drawer front.
     pub fn pull_holes(
         spec: &PullSpec,
@@ -499,6 +722,59 @@ impl Hardware {
             kind: HardwareKind::Pull(PullSpec {
                 hole_spacing: 0.0,
                 ..Default::default()
+            }),
+        }
+    }
+
+    /// Standard 7x50mm confirmat screw.
+    pub fn confirmat_7x50() -> Self {
+        Self {
+            id: "confirmat-7x50".into(),
+            description: "7x50mm confirmat assembly screw".into(),
+            kind: HardwareKind::Confirmat(ConfirmatSpec::default()),
+        }
+    }
+
+    /// 15mm cam lock fastener (Minifix/Rafix style).
+    pub fn cam_lock_15mm() -> Self {
+        Self {
+            id: "cam-lock-15mm".into(),
+            description: "15mm cam lock fastener".into(),
+            kind: HardwareKind::CamLock(CamLockSpec::default()),
+        }
+    }
+
+    /// 2mm PVC edge banding (pre-glued).
+    pub fn pvc_edge_2mm() -> Self {
+        Self {
+            id: "pvc-edge-2mm".into(),
+            description: "2mm PVC edge banding (pre-glued)".into(),
+            kind: HardwareKind::EdgeBand(EdgeBandSpec::default()),
+        }
+    }
+
+    /// 0.5mm PVC edge banding (pre-glued, thin).
+    pub fn pvc_edge_thin() -> Self {
+        Self {
+            id: "pvc-edge-0.5mm".into(),
+            description: "0.5mm PVC edge banding (pre-glued)".into(),
+            kind: HardwareKind::EdgeBand(EdgeBandSpec {
+                thickness: 0.020, // 0.5mm
+                material_type: EdgeBandMaterial::Pvc,
+                pre_glued: true,
+            }),
+        }
+    }
+
+    /// Wood veneer edge banding (2mm, not pre-glued).
+    pub fn wood_edge_2mm() -> Self {
+        Self {
+            id: "wood-edge-2mm".into(),
+            description: "2mm wood veneer edge banding".into(),
+            kind: HardwareKind::EdgeBand(EdgeBandSpec {
+                thickness: 0.079, // 2mm
+                material_type: EdgeBandMaterial::Wood,
+                pre_glued: false,
             }),
         }
     }
@@ -654,5 +930,165 @@ mod tests {
         // Zone from 0 to 8, margins eat 10 → no room
         let ops = HardwareApplicator::shelf_pin_holes(&spec, "side", 12.0, 0.0, 8.0);
         assert!(ops.is_empty(), "tiny zone should produce no pin holes");
+    }
+
+    // --- Phase 14: New hardware type tests ---
+
+    #[test]
+    fn test_confirmat_bore_generates_pilot_and_counterbore() {
+        let spec = ConfirmatSpec::default();
+        let ops = HardwareApplicator::confirmat_bore(&spec, "top", 6.0, 3.0, 0.75);
+        assert_eq!(ops.len(), 2, "confirmat bore should generate pilot + counterbore");
+
+        // First op: pilot hole through face panel
+        match &ops[0].operation {
+            PartOperation::Drill(d) => {
+                assert!((d.diameter - 0.197).abs() < 0.01, "pilot should be 5mm");
+                assert!((d.depth - 0.75).abs() < 1e-10, "pilot should go through panel");
+            }
+            other => panic!("expected Drill, got {:?}", other),
+        }
+
+        // Second op: counterbore for screw head
+        match &ops[1].operation {
+            PartOperation::Drill(d) => {
+                assert!((d.diameter - 0.394).abs() < 0.01, "counterbore should be 10mm");
+                assert!((d.depth - 0.079).abs() < 0.01, "counterbore depth should be 2mm");
+            }
+            other => panic!("expected Drill, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_confirmat_edge_bore() {
+        let spec = ConfirmatSpec::default();
+        let ops = HardwareApplicator::confirmat_edge_bore(&spec, "shelf", 6.0, 0.375);
+        assert_eq!(ops.len(), 1);
+
+        match &ops[0].operation {
+            PartOperation::Drill(d) => {
+                assert!((d.diameter - 0.276).abs() < 0.01, "edge bore should be 7mm");
+                assert!((d.depth - 1.969).abs() < 0.01, "depth should be 50mm");
+            }
+            other => panic!("expected Drill, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_cam_lock_bore_diameter() {
+        let spec = CamLockSpec::default();
+        let ops = HardwareApplicator::cam_lock_bore(&spec, "side", 1.339, 6.0);
+        assert_eq!(ops.len(), 1);
+
+        match &ops[0].operation {
+            PartOperation::Drill(d) => {
+                assert!((d.diameter - 0.591).abs() < 0.01, "cam bore should be 15mm");
+                assert!((d.depth - 0.492).abs() < 0.01, "cam depth should be 12.5mm");
+            }
+            other => panic!("expected Drill, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_cam_lock_bolt_hole() {
+        let spec = CamLockSpec::default();
+        let ops = HardwareApplicator::cam_lock_bolt_hole(&spec, "shelf_edge", 6.0, 0.375);
+        assert_eq!(ops.len(), 1);
+
+        match &ops[0].operation {
+            PartOperation::Drill(d) => {
+                assert!((d.diameter - 0.315).abs() < 0.01, "bolt hole should be 8mm");
+                assert!((d.depth - 1.339).abs() < 0.01, "bolt depth should be 34mm");
+            }
+            other => panic!("expected Drill, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_confirmat_spec_defaults() {
+        let spec = ConfirmatSpec::default();
+        assert!((spec.screw_diameter - 0.276).abs() < 0.01);
+        assert!((spec.head_diameter - 0.394).abs() < 0.01);
+        assert!((spec.pilot_diameter - 0.197).abs() < 0.01);
+        assert!((spec.depth - 1.969).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cam_lock_spec_defaults() {
+        let spec = CamLockSpec::default();
+        assert!((spec.cam_diameter - 0.591).abs() < 0.01);
+        assert!((spec.cam_depth - 0.492).abs() < 0.01);
+        assert!((spec.bolt_hole_diameter - 0.315).abs() < 0.01);
+        assert!((spec.cam_setback - 1.339).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_edge_band_spec_defaults() {
+        let spec = EdgeBandSpec::default();
+        assert!((spec.thickness - 0.079).abs() < 0.01);
+        assert_eq!(spec.material_type, EdgeBandMaterial::Pvc);
+        assert!(spec.pre_glued);
+    }
+
+    #[test]
+    fn test_builtin_confirmat() {
+        let hw = Hardware::confirmat_7x50();
+        assert_eq!(hw.id, "confirmat-7x50");
+        assert!(matches!(hw.kind, HardwareKind::Confirmat(_)));
+    }
+
+    #[test]
+    fn test_builtin_cam_lock() {
+        let hw = Hardware::cam_lock_15mm();
+        assert_eq!(hw.id, "cam-lock-15mm");
+        assert!(matches!(hw.kind, HardwareKind::CamLock(_)));
+    }
+
+    #[test]
+    fn test_builtin_edge_bands() {
+        let thick = Hardware::pvc_edge_2mm();
+        assert!(matches!(thick.kind, HardwareKind::EdgeBand(_)));
+        if let HardwareKind::EdgeBand(spec) = &thick.kind {
+            assert!((spec.thickness - 0.079).abs() < 0.01);
+            assert!(spec.pre_glued);
+        }
+
+        let thin = Hardware::pvc_edge_thin();
+        if let HardwareKind::EdgeBand(spec) = &thin.kind {
+            assert!((spec.thickness - 0.020).abs() < 0.01);
+        }
+
+        let wood = Hardware::wood_edge_2mm();
+        if let HardwareKind::EdgeBand(spec) = &wood.kind {
+            assert_eq!(spec.material_type, EdgeBandMaterial::Wood);
+            assert!(!spec.pre_glued);
+        }
+    }
+
+    #[test]
+    fn test_confirmat_serialization() {
+        let hw = Hardware::confirmat_7x50();
+        let toml_str = toml::to_string_pretty(&hw).unwrap();
+        let hw2: Hardware = toml::from_str(&toml_str).unwrap();
+        assert_eq!(hw.id, hw2.id);
+        assert!(matches!(hw2.kind, HardwareKind::Confirmat(_)));
+    }
+
+    #[test]
+    fn test_cam_lock_serialization() {
+        let hw = Hardware::cam_lock_15mm();
+        let toml_str = toml::to_string_pretty(&hw).unwrap();
+        let hw2: Hardware = toml::from_str(&toml_str).unwrap();
+        assert_eq!(hw.id, hw2.id);
+        assert!(matches!(hw2.kind, HardwareKind::CamLock(_)));
+    }
+
+    #[test]
+    fn test_edge_band_serialization() {
+        let hw = Hardware::pvc_edge_2mm();
+        let toml_str = toml::to_string_pretty(&hw).unwrap();
+        let hw2: Hardware = toml::from_str(&toml_str).unwrap();
+        assert_eq!(hw.id, hw2.id);
+        assert!(matches!(hw2.kind, HardwareKind::EdgeBand(_)));
     }
 }

@@ -1,0 +1,45 @@
+# Bathroom vanity base cabinet: 30" wide, 31.5" tall, 21" deep.
+# Shorter and shallower than kitchen base cabinet with optional plumbing cutout.
+
+[project]
+name = "Bathroom Vanity"
+units = "inches"
+
+[material]
+name = "3/4\" Maple Plywood"
+thickness = 0.75
+sheet_width = 48.0
+sheet_length = 96.0
+material_type = "plywood"
+
+[cabinet]
+name = "vanity_base"
+cabinet_type = "vanity_base"
+width = 30.0
+height = 31.5
+depth = 21.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 1
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+
+[cabinet.toe_kick]
+height = 4.0
+setback = 3.0
+
+[cabinet.plumbing_cutout]
+x = 10.0
+y = 6.0
+width = 10.0
+height = 8.0
+
+[[tools]]
+number = 1
+tool_type = "endmill"
+diameter = 0.25
+flutes = 2
+cutting_length = 1.0
+description = "1/4\" 2-flute upcut endmill"

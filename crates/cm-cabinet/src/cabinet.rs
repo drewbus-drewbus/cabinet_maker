@@ -69,6 +69,14 @@ pub struct Cabinet {
     /// Face-frame configuration (only used when construction = FaceFrame).
     #[serde(default)]
     pub face_frame: Option<FaceFrameConfig>,
+
+    /// Corner cabinet type (only used when cabinet_type = CornerCabinet).
+    #[serde(default)]
+    pub corner_type: Option<CornerType>,
+
+    /// Plumbing cutout (only used for VanityBase / SinkBase).
+    #[serde(default)]
+    pub plumbing_cutout: Option<PlumbingCutout>,
 }
 
 fn default_back_thickness() -> f64 {
@@ -99,6 +107,10 @@ pub enum CabinetType {
     SinkBase,
     /// Drawer bank (base cabinet with drawer box slots).
     DrawerBank,
+    /// L-shaped corner cabinet (36"x36" standard footprint).
+    CornerCabinet,
+    /// Bathroom vanity base (31.5" H, 21" D standard).
+    VanityBase,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -259,6 +271,144 @@ impl Default for FaceFrameConfig {
     }
 }
 
+/// Corner cabinet type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CornerType {
+    /// Diagonal face (standard 45-degree opening).
+    Diagonal,
+    /// Blind left (extends past adjacent left cabinet).
+    BlindLeft,
+    /// Blind right (extends past adjacent right cabinet).
+    BlindRight,
+}
+
+/// Plumbing cutout definition for vanity/sink bases.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct PlumbingCutout {
+    /// X position of cutout center from cabinet left edge.
+    pub x: f64,
+    /// Y position of cutout center from cabinet bottom.
+    pub y: f64,
+    /// Width of the cutout.
+    pub width: f64,
+    /// Height of the cutout.
+    pub height: f64,
+}
+
+/// Severity level for validation issues.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationSeverity {
+    Warning,
+    Error,
+}
+
+/// A structural validation issue found in a cabinet design.
+#[derive(Debug, Clone)]
+pub struct ValidationIssue {
+    pub severity: ValidationSeverity,
+    pub message: String,
+}
+
+/// Validate a cabinet design against structural/AWI/KCMA rules.
+///
+/// Returns a list of warnings and errors. Errors indicate designs that
+/// cannot be built safely; warnings indicate suboptimal designs.
+pub fn validate_cabinet(cabinet: &Cabinet) -> Vec<ValidationIssue> {
+    let mut issues = Vec::new();
+
+    // Rule: Shelf span warning — width > 36" without center support
+    if cabinet.width > 36.0 && cabinet.shelf_count > 0 {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Warning,
+            message: format!(
+                "Shelf span {:.1}\" exceeds 36\" — consider adding a center support or divider",
+                cabinet.width
+            ),
+        });
+    }
+
+    // Rule: Material thickness vs span — 1/4" material can't span >12" as a shelf
+    if cabinet.material_thickness <= 0.25 && cabinet.width > 12.0 && cabinet.shelf_count > 0 {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Error,
+            message: format!(
+                "Material thickness {:.3}\" is too thin for {:.1}\" shelf span (max 12\")",
+                cabinet.material_thickness, cabinet.width
+            ),
+        });
+    }
+
+    // Rule: Dado depth cannot exceed 50% of side thickness
+    if cabinet.dado_depth_fraction > 0.5 {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Error,
+            message: format!(
+                "Dado depth fraction {:.0}% exceeds 50% of material thickness — structural weakness",
+                cabinet.dado_depth_fraction * 100.0
+            ),
+        });
+    }
+
+    // Rule: Toe kick height must be 3-4.5" (KCMA standard)
+    if let Some(ref tk) = cabinet.toe_kick
+        && (tk.height < 3.0 || tk.height > 4.5)
+    {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Warning,
+            message: format!(
+                "Toe kick height {:.1}\" outside KCMA standard range (3.0\"-4.5\")",
+                tk.height
+            ),
+        });
+    }
+
+    // Rule: Drawer box height cannot exceed opening height minus slide clearance
+    if let Some(ref drawers) = cabinet.drawers
+        && drawers.opening_height > 0.0
+    {
+        let max_box_height = drawers.opening_height - 2.0 * drawers.slide_clearance;
+        if max_box_height <= 0.0 {
+            issues.push(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                message: format!(
+                    "Drawer opening {:.3}\" minus slide clearance leaves no room for drawer box",
+                    drawers.opening_height
+                ),
+            });
+        }
+    }
+
+    // Rule: 1/4" back on cabinet >48" tall needs mid-rail
+    if cabinet.has_back && cabinet.back_thickness <= 0.25 && cabinet.height > 48.0 {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Warning,
+            message: format!(
+                "1/4\" back panel on {:.1}\" tall cabinet should have a mid-rail for rigidity",
+                cabinet.height
+            ),
+        });
+    }
+
+    // Rule: Cabinet dimensions must be positive
+    if cabinet.width <= 0.0 || cabinet.height <= 0.0 || cabinet.depth <= 0.0 {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Error,
+            message: "Cabinet dimensions must all be positive".into(),
+        });
+    }
+
+    // Rule: Material thickness must be positive
+    if cabinet.material_thickness <= 0.0 {
+        issues.push(ValidationIssue {
+            severity: ValidationSeverity::Error,
+            message: "Material thickness must be positive".into(),
+        });
+    }
+
+    issues
+}
+
 impl Cabinet {
     /// Generate all parts for this cabinet based on its parameters.
     pub fn generate_parts(&self) -> Vec<Part> {
@@ -269,6 +419,8 @@ impl Cabinet {
             CabinetType::TallCabinet => self.generate_tall_cabinet(),
             CabinetType::SinkBase => self.generate_sink_base(),
             CabinetType::DrawerBank => self.generate_drawer_bank(),
+            CabinetType::CornerCabinet => self.generate_corner_cabinet(),
+            CabinetType::VanityBase => self.generate_vanity_base(),
         };
 
         // If face-frame construction, adjust carcass and add frame parts
@@ -1017,6 +1169,124 @@ impl Cabinet {
 
         parts
     }
+
+    // -----------------------------------------------------------------------
+    // CornerCabinet — L-shaped cabinet for corner installation
+    // -----------------------------------------------------------------------
+    fn generate_corner_cabinet(&self) -> Vec<Part> {
+        let mut parts = Vec::new();
+        let mt = self.material_thickness;
+        let dado_depth = self.dado_depth();
+
+        // Corner cabinet: two connected boxes sharing a partition.
+        // Standard 36"x36" footprint with the width representing one side.
+        // The depth is the other side's length.
+        let side_height = self.height;
+        let tk = self.toe_kick.unwrap_or_default();
+
+        let bottom_y = if self.toe_kick.is_some() { tk.height + mt / 2.0 } else { mt / 2.0 };
+        let top_y = side_height - mt / 2.0;
+        let shelf_positions = self.shelf_positions(
+            if self.toe_kick.is_some() { tk.height + mt } else { mt },
+            self.height - mt,
+        );
+
+        // Two side panels (different depths for L-shape)
+        let side_ops_left = self.build_side_ops(bottom_y, top_y, &shelf_positions, true);
+
+        parts.push(Part {
+            label: "left_side".into(),
+            rect: Rect::new(Point2D::origin(), self.depth, side_height),
+            thickness: mt,
+            grain_direction: Default::default(),
+            operations: side_ops_left.clone(),
+            quantity: 1,
+        });
+
+        parts.push(Part {
+            label: "right_side".into(),
+            rect: Rect::new(Point2D::origin(), self.depth, side_height),
+            thickness: mt,
+            grain_direction: Default::default(),
+            operations: side_ops_left,
+            quantity: 1,
+        });
+
+        // Shared partition (center divider)
+        let partition_depth = self.depth;
+        let partition_height = side_height;
+        parts.push(Part {
+            label: "partition".into(),
+            rect: Rect::new(Point2D::origin(), partition_depth, partition_height),
+            thickness: mt,
+            grain_direction: Default::default(),
+            operations: vec![],
+            quantity: 1,
+        });
+
+        // Top and bottom panels
+        let tb_width = self.horizontal_panel_width();
+        let mut tb_ops = Vec::new();
+        if self.has_back && self.back_joinery == BackJoinery::Rabbet {
+            tb_ops.push(PartOperation::Rabbet(RabbetOp {
+                edge: Edge::Right,
+                width: self.back_thickness,
+                depth: dado_depth,
+            }));
+        }
+
+        parts.push(Part {
+            label: "bottom".into(),
+            rect: Rect::new(Point2D::origin(), tb_width, self.depth),
+            thickness: mt,
+            grain_direction: Default::default(),
+            operations: tb_ops.clone(),
+            quantity: 1,
+        });
+        parts.push(Part {
+            label: "top".into(),
+            rect: Rect::new(Point2D::origin(), tb_width, self.depth),
+            thickness: mt,
+            grain_direction: Default::default(),
+            operations: tb_ops,
+            quantity: 1,
+        });
+
+        // Two back panels (one for each wing of the L)
+        if self.has_back {
+            let back_height = if self.toe_kick.is_some() {
+                self.height - tk.height
+            } else {
+                self.height
+            };
+            if let Some(mut back) = self.generate_back_part(back_height) {
+                back.quantity = 2;
+                parts.push(back);
+            }
+        }
+
+        // Shelves
+        let shelf_depth = if self.has_back && self.back_joinery == BackJoinery::Rabbet {
+            self.depth - self.back_thickness
+        } else {
+            self.depth
+        };
+        if let Some(shelf_part) = self.generate_shelf_parts(tb_width, shelf_depth) {
+            parts.push(shelf_part);
+        }
+
+        parts
+    }
+
+    // -----------------------------------------------------------------------
+    // VanityBase — bathroom vanity variant of BaseCabinet
+    // -----------------------------------------------------------------------
+    fn generate_vanity_base(&self) -> Vec<Part> {
+        // Vanity is structurally identical to BaseCabinet with different
+        // default dimensions (31.5" H, 21" D). The parametric values handle this.
+        // We reuse BaseCabinet generation.
+        self.generate_base_cabinet()
+    }
 }
 
 #[cfg(test)]
@@ -1042,6 +1312,8 @@ mod tests {
             stretchers: None,
             construction: ConstructionMethod::Frameless,
             face_frame: None,
+            corner_type: None,
+            plumbing_cutout: None,
         }
     }
 
@@ -1122,6 +1394,8 @@ mod tests {
             stretchers: None,
             construction: ConstructionMethod::Frameless,
             face_frame: None,
+            corner_type: None,
+            plumbing_cutout: None,
         }
     }
 
@@ -1175,6 +1449,8 @@ mod tests {
             stretchers: None,
             construction: ConstructionMethod::Frameless,
             face_frame: None,
+            corner_type: None,
+            plumbing_cutout: None,
         }
     }
 
@@ -1217,6 +1493,8 @@ mod tests {
             stretchers: None,
             construction: ConstructionMethod::Frameless,
             face_frame: None,
+            corner_type: None,
+            plumbing_cutout: None,
         }
     }
 
@@ -1276,6 +1554,8 @@ mod tests {
             stretchers: Some(StretcherConfig::default()),
             construction: ConstructionMethod::Frameless,
             face_frame: None,
+            corner_type: None,
+            plumbing_cutout: None,
         }
     }
 
@@ -1328,6 +1608,8 @@ mod tests {
             stretchers: None,
             construction: ConstructionMethod::Frameless,
             face_frame: None,
+            corner_type: None,
+            plumbing_cutout: None,
         }
     }
 
@@ -1386,6 +1668,8 @@ mod tests {
                 overhang: 0.0625,
                 cnc_pocket_holes: false,
             }),
+            corner_type: None,
+            plumbing_cutout: None,
         }
     }
 
@@ -1487,5 +1771,440 @@ mod tests {
         let rail = parts.iter().find(|p| p.label == "face_frame_rail");
         assert!(stile.is_none(), "frameless cabinet should have no stiles");
         assert!(rail.is_none(), "frameless cabinet should have no rails");
+    }
+
+    // --- Validation Tests ---
+
+    #[test]
+    fn test_validate_wide_shelf_warning() {
+        let mut cab = test_cabinet();
+        cab.width = 48.0; // exceeds 36"
+        cab.shelf_count = 1;
+        let issues = validate_cabinet(&cab);
+        assert!(issues.iter().any(|i| i.severity == ValidationSeverity::Warning
+            && i.message.contains("36\"")),
+            "should warn about wide shelf span");
+    }
+
+    #[test]
+    fn test_validate_thin_material_error() {
+        let mut cab = test_cabinet();
+        cab.material_thickness = 0.25;
+        cab.width = 24.0; // > 12"
+        cab.shelf_count = 1;
+        let issues = validate_cabinet(&cab);
+        assert!(issues.iter().any(|i| i.severity == ValidationSeverity::Error
+            && i.message.contains("too thin")),
+            "should error on thin material for wide span");
+    }
+
+    #[test]
+    fn test_validate_dado_depth_error() {
+        let mut cab = test_cabinet();
+        cab.dado_depth_fraction = 0.75; // 75% > 50%
+        let issues = validate_cabinet(&cab);
+        assert!(issues.iter().any(|i| i.severity == ValidationSeverity::Error
+            && i.message.contains("Dado depth")),
+            "should error on deep dado");
+    }
+
+    #[test]
+    fn test_validate_toe_kick_warning() {
+        let mut cab = test_base_cabinet();
+        cab.toe_kick = Some(ToeKickConfig { height: 2.0, setback: 3.0 }); // too short
+        let issues = validate_cabinet(&cab);
+        assert!(issues.iter().any(|i| i.severity == ValidationSeverity::Warning
+            && i.message.contains("KCMA")),
+            "should warn about non-standard toe kick");
+    }
+
+    #[test]
+    fn test_validate_tall_thin_back() {
+        let mut cab = test_cabinet();
+        cab.height = 84.0;
+        cab.back_thickness = 0.25;
+        cab.has_back = true;
+        let issues = validate_cabinet(&cab);
+        assert!(issues.iter().any(|i| i.message.contains("mid-rail")),
+            "should warn about thin back on tall cabinet");
+    }
+
+    #[test]
+    fn test_validate_good_cabinet_no_errors() {
+        let cab = test_cabinet(); // Standard bookshelf — no issues
+        let issues = validate_cabinet(&cab);
+        let errors: Vec<_> = issues.iter()
+            .filter(|i| i.severity == ValidationSeverity::Error)
+            .collect();
+        assert!(errors.is_empty(), "good cabinet should have no errors");
+    }
+
+    // --- Corner Cabinet Tests ---
+
+    fn test_corner_cabinet() -> Cabinet {
+        Cabinet {
+            name: "Corner Cabinet".into(),
+            cabinet_type: CabinetType::CornerCabinet,
+            width: 36.0,
+            height: 34.5,
+            depth: 24.0,
+            material_thickness: 0.75,
+            back_thickness: 0.25,
+            shelf_count: 1,
+            shelf_joinery: ShelfJoinery::Dado,
+            dado_depth_fraction: 0.5,
+            has_back: true,
+            back_joinery: BackJoinery::Rabbet,
+            toe_kick: Some(ToeKickConfig::default()),
+            drawers: None,
+            stretchers: None,
+            construction: ConstructionMethod::Frameless,
+            face_frame: None,
+            corner_type: Some(CornerType::Diagonal),
+            plumbing_cutout: None,
+        }
+    }
+
+    #[test]
+    fn test_corner_cabinet_has_partition() {
+        let cab = test_corner_cabinet();
+        let parts = cab.generate_parts();
+        let partition = parts.iter().find(|p| p.label == "partition");
+        assert!(partition.is_some(), "corner cabinet should have a partition");
+    }
+
+    #[test]
+    fn test_corner_cabinet_part_count() {
+        let cab = test_corner_cabinet();
+        let parts = cab.generate_parts();
+        // 2 sides + partition + top + bottom + back(qty 2) + shelf = 7
+        assert!(parts.len() >= 6, "corner cabinet should have at least 6 part entries, got {}", parts.len());
+    }
+
+    #[test]
+    fn test_corner_cabinet_has_two_backs() {
+        let cab = test_corner_cabinet();
+        let parts = cab.generate_parts();
+        let back = parts.iter().find(|p| p.label == "back");
+        assert!(back.is_some(), "corner cabinet should have back panels");
+        assert_eq!(back.unwrap().quantity, 2, "corner cabinet should have 2 back panels");
+    }
+
+    // --- Vanity Base Tests ---
+
+    fn test_vanity_base() -> Cabinet {
+        Cabinet {
+            name: "Vanity Base".into(),
+            cabinet_type: CabinetType::VanityBase,
+            width: 36.0,
+            height: 31.5, // standard vanity height
+            depth: 21.0,  // standard vanity depth
+            material_thickness: 0.75,
+            back_thickness: 0.25,
+            shelf_count: 0,
+            shelf_joinery: ShelfJoinery::Dado,
+            dado_depth_fraction: 0.5,
+            has_back: true,
+            back_joinery: BackJoinery::Rabbet,
+            toe_kick: Some(ToeKickConfig::default()),
+            drawers: None,
+            stretchers: None,
+            construction: ConstructionMethod::Frameless,
+            face_frame: None,
+            corner_type: None,
+            plumbing_cutout: Some(PlumbingCutout {
+                x: 18.0, y: 15.0, width: 6.0, height: 8.0,
+            }),
+        }
+    }
+
+    #[test]
+    fn test_vanity_base_dimensions() {
+        let cab = test_vanity_base();
+        let parts = cab.generate_parts();
+        let left = parts.iter().find(|p| p.label == "left_side").unwrap();
+        assert!((left.rect.height - 31.5).abs() < 1e-10, "vanity height should be 31.5\"");
+        assert!((left.rect.width - 21.0).abs() < 1e-10, "vanity depth should be 21\"");
+    }
+
+    #[test]
+    fn test_vanity_base_part_count() {
+        let cab = test_vanity_base();
+        let parts = cab.generate_parts();
+        // Same as base cabinet: 2 sides + bottom + top + back = 5
+        assert!(parts.len() >= 4, "vanity should have at least 4 part entries, got {}", parts.len());
+    }
+
+    // --- Validation edge-case tests ---
+
+    #[test]
+    fn test_validate_multiple_issues() {
+        // Cabinet with multiple validation issues at once
+        let cab = Cabinet {
+            name: "bad_cabinet".to_string(),
+            cabinet_type: CabinetType::BaseCabinet,
+            width: 48.0,  // wide shelf → warning
+            height: 60.0,
+            depth: 24.0,
+            material_thickness: 0.25, // thin material + wide span → error
+            back_thickness: 0.25,
+            shelf_count: 2,
+            shelf_joinery: ShelfJoinery::Dado,
+            dado_depth_fraction: 0.6, // >50% → error
+            has_back: true,
+            back_joinery: BackJoinery::Rabbet,
+            toe_kick: Some(ToeKickConfig { height: 2.0, setback: 3.0 }), // <3" → warning
+            drawers: None,
+            stretchers: None,
+            construction: ConstructionMethod::Frameless,
+            face_frame: None,
+            corner_type: None,
+            plumbing_cutout: None,
+        };
+        let issues = validate_cabinet(&cab);
+        assert!(issues.len() >= 3, "should have at least 3 issues, got {}", issues.len());
+
+        let errors = issues.iter().filter(|i| i.severity == ValidationSeverity::Error).count();
+        let warnings = issues.iter().filter(|i| i.severity == ValidationSeverity::Warning).count();
+        assert!(errors >= 2, "should have at least 2 errors (thin material + dado depth)");
+        assert!(warnings >= 1, "should have at least 1 warning (toe kick)");
+    }
+
+    #[test]
+    fn test_validate_zero_dimensions() {
+        let cab = Cabinet {
+            name: "zero".to_string(),
+            cabinet_type: CabinetType::BasicBox,
+            width: 0.0,
+            height: 30.0,
+            depth: 12.0,
+            material_thickness: 0.75,
+            back_thickness: 0.25,
+            shelf_count: 0,
+            shelf_joinery: ShelfJoinery::Dado,
+            dado_depth_fraction: 0.5,
+            has_back: false,
+            back_joinery: BackJoinery::Rabbet,
+            toe_kick: None,
+            drawers: None,
+            stretchers: None,
+            construction: ConstructionMethod::Frameless,
+            face_frame: None,
+            corner_type: None,
+            plumbing_cutout: None,
+        };
+        let issues = validate_cabinet(&cab);
+        let dimension_errors = issues.iter()
+            .filter(|i| i.severity == ValidationSeverity::Error && i.message.contains("dimension"))
+            .count();
+        assert!(dimension_errors >= 1, "zero width should trigger dimension error");
+    }
+
+    #[test]
+    fn test_validate_negative_thickness() {
+        let cab = Cabinet {
+            name: "neg".to_string(),
+            cabinet_type: CabinetType::BasicBox,
+            width: 24.0,
+            height: 30.0,
+            depth: 12.0,
+            material_thickness: -0.75,
+            back_thickness: 0.25,
+            shelf_count: 0,
+            shelf_joinery: ShelfJoinery::Dado,
+            dado_depth_fraction: 0.5,
+            has_back: false,
+            back_joinery: BackJoinery::Rabbet,
+            toe_kick: None,
+            drawers: None,
+            stretchers: None,
+            construction: ConstructionMethod::Frameless,
+            face_frame: None,
+            corner_type: None,
+            plumbing_cutout: None,
+        };
+        let issues = validate_cabinet(&cab);
+        let thickness_errors = issues.iter()
+            .filter(|i| i.severity == ValidationSeverity::Error && i.message.contains("thickness"))
+            .count();
+        assert!(thickness_errors >= 1, "negative thickness should trigger error");
+    }
+
+    #[test]
+    fn test_validate_narrow_shelf_no_warning() {
+        // 24" wide cabinet — no shelf span warning
+        let cab = Cabinet {
+            name: "narrow".to_string(),
+            cabinet_type: CabinetType::BasicBox,
+            width: 24.0,
+            height: 30.0,
+            depth: 12.0,
+            material_thickness: 0.75,
+            back_thickness: 0.25,
+            shelf_count: 3,
+            shelf_joinery: ShelfJoinery::Dado,
+            dado_depth_fraction: 0.5,
+            has_back: true,
+            back_joinery: BackJoinery::Rabbet,
+            toe_kick: None,
+            drawers: None,
+            stretchers: None,
+            construction: ConstructionMethod::Frameless,
+            face_frame: None,
+            corner_type: None,
+            plumbing_cutout: None,
+        };
+        let issues = validate_cabinet(&cab);
+        let span_warnings = issues.iter()
+            .filter(|i| i.message.contains("span"))
+            .count();
+        assert_eq!(span_warnings, 0, "24\" cabinet should not trigger span warning");
+    }
+
+    #[test]
+    fn test_validate_drawer_opening_too_small() {
+        let cab = Cabinet {
+            name: "tight_drawers".to_string(),
+            cabinet_type: CabinetType::DrawerBank,
+            width: 18.0,
+            height: 34.5,
+            depth: 24.0,
+            material_thickness: 0.75,
+            back_thickness: 0.25,
+            shelf_count: 0,
+            shelf_joinery: ShelfJoinery::Dado,
+            dado_depth_fraction: 0.5,
+            has_back: true,
+            back_joinery: BackJoinery::Rabbet,
+            toe_kick: Some(ToeKickConfig::default()),
+            drawers: Some(DrawerConfig {
+                count: 4,
+                opening_height: 0.5, // way too small
+                slide_clearance: 0.5,
+            }),
+            stretchers: None,
+            construction: ConstructionMethod::Frameless,
+            face_frame: None,
+            corner_type: None,
+            plumbing_cutout: None,
+        };
+        let issues = validate_cabinet(&cab);
+        let drawer_errors = issues.iter()
+            .filter(|i| i.severity == ValidationSeverity::Error && i.message.contains("drawer"))
+            .count();
+        assert!(drawer_errors >= 1, "tiny drawer opening should trigger error");
+    }
+
+    #[test]
+    fn test_validate_toe_kick_boundary_values() {
+        // toe kick at exact boundaries
+        let make_cab = |tk_height: f64| -> Cabinet {
+            Cabinet {
+                name: "tk".to_string(),
+                cabinet_type: CabinetType::BaseCabinet,
+                width: 24.0, height: 34.5, depth: 24.0,
+                material_thickness: 0.75, back_thickness: 0.25,
+                shelf_count: 0, shelf_joinery: ShelfJoinery::Dado,
+                dado_depth_fraction: 0.5,
+                has_back: true, back_joinery: BackJoinery::Rabbet,
+                toe_kick: Some(ToeKickConfig { height: tk_height, setback: 3.0 }),
+                drawers: None, stretchers: None,
+                construction: ConstructionMethod::Frameless,
+                face_frame: None, corner_type: None, plumbing_cutout: None,
+            }
+        };
+
+        // At exact boundaries (3.0 and 4.5) — should NOT warn
+        let issues_30 = validate_cabinet(&make_cab(3.0));
+        let tk_warns_30 = issues_30.iter().filter(|i| i.message.contains("kick")).count();
+        assert_eq!(tk_warns_30, 0, "toe kick at 3.0\" should be valid");
+
+        let issues_45 = validate_cabinet(&make_cab(4.5));
+        let tk_warns_45 = issues_45.iter().filter(|i| i.message.contains("kick")).count();
+        assert_eq!(tk_warns_45, 0, "toe kick at 4.5\" should be valid");
+
+        // Just outside boundaries — should warn
+        let issues_29 = validate_cabinet(&make_cab(2.9));
+        let tk_warns_29 = issues_29.iter().filter(|i| i.message.contains("kick")).count();
+        assert!(tk_warns_29 > 0, "toe kick at 2.9\" should warn");
+
+        let issues_46 = validate_cabinet(&make_cab(4.6));
+        let tk_warns_46 = issues_46.iter().filter(|i| i.message.contains("kick")).count();
+        assert!(tk_warns_46 > 0, "toe kick at 4.6\" should warn");
+    }
+
+    #[test]
+    fn test_validate_exactly_36_inch_no_span_warning() {
+        // Width exactly 36" — should NOT trigger span warning (> 36", not >=)
+        let cab = Cabinet {
+            name: "boundary".to_string(),
+            cabinet_type: CabinetType::BasicBox,
+            width: 36.0,
+            height: 30.0,
+            depth: 12.0,
+            material_thickness: 0.75,
+            back_thickness: 0.25,
+            shelf_count: 1,
+            shelf_joinery: ShelfJoinery::Dado,
+            dado_depth_fraction: 0.5,
+            has_back: true,
+            back_joinery: BackJoinery::Rabbet,
+            toe_kick: None,
+            drawers: None,
+            stretchers: None,
+            construction: ConstructionMethod::Frameless,
+            face_frame: None,
+            corner_type: None,
+            plumbing_cutout: None,
+        };
+        let issues = validate_cabinet(&cab);
+        let span_warnings = issues.iter()
+            .filter(|i| i.message.contains("span"))
+            .count();
+        assert_eq!(span_warnings, 0, "36\" should not trigger span warning");
+    }
+
+    // --- Corner cabinet additional tests ---
+
+    #[test]
+    fn test_corner_cabinet_shelf_dados() {
+        let mut cab = test_corner_cabinet();
+        cab.shelf_count = 2;
+        let parts = cab.generate_parts();
+        let left = parts.iter().find(|p| p.label == "left_side").unwrap();
+        let dado_ops: Vec<_> = left.operations.iter()
+            .filter(|op| matches!(op, PartOperation::Dado(_)))
+            .collect();
+        // Should have dados for bottom, top, and 2 shelves = 4
+        assert!(dado_ops.len() >= 3, "side should have dados, got {}", dado_ops.len());
+    }
+
+    #[test]
+    fn test_corner_cabinet_no_shelves() {
+        let mut cab = test_corner_cabinet();
+        cab.shelf_count = 0;
+        let parts = cab.generate_parts();
+        let shelf_parts: Vec<_> = parts.iter().filter(|p| p.label.contains("shelf")).collect();
+        assert!(shelf_parts.is_empty(), "0 shelves should produce no shelf parts");
+    }
+
+    // --- VanityBase additional tests ---
+
+    #[test]
+    fn test_vanity_base_with_shelves() {
+        let mut cab = test_vanity_base();
+        cab.shelf_count = 2;
+        let parts = cab.generate_parts();
+        let shelves: Vec<_> = parts.iter().filter(|p| p.label.contains("shelf")).collect();
+        assert!(!shelves.is_empty(), "vanity with shelves should generate shelf parts");
+    }
+
+    #[test]
+    fn test_vanity_base_without_back() {
+        let mut cab = test_vanity_base();
+        cab.has_back = false;
+        let parts = cab.generate_parts();
+        let backs: Vec<_> = parts.iter().filter(|p| p.label == "back").collect();
+        assert!(backs.is_empty(), "vanity without back should have no back part");
     }
 }

@@ -19,6 +19,13 @@ pub struct CamConfig {
     pub tab_height: f64,
     /// Number of tabs per side (for profile cuts).
     pub tabs_per_side: u32,
+    /// Optional arc lead-in radius for profile cuts. None = direct plunge (default).
+    /// Some(r) = quarter-circle arc approach/retract at the start of the cut.
+    #[serde(default)]
+    pub lead_in_radius: Option<f64>,
+    /// Whether to use canned drilling cycles (G81/G83) instead of manual peck moves.
+    #[serde(default)]
+    pub use_canned_cycles: bool,
 }
 
 impl Default for CamConfig {
@@ -30,6 +37,8 @@ impl Default for CamConfig {
             tab_width: 0.5,
             tab_height: 0.125,
             tabs_per_side: 2,
+            lead_in_radius: None,
+            use_canned_cycles: false,
         }
     }
 }
@@ -72,11 +81,22 @@ pub fn generate_profile_cut(
     // Tab Z: leave tab_height of material on the final pass
     let tab_z = -total_depth + config.tab_height;
 
-    // Rapid to start position (above bottom-left corner of cut path)
+    // Lead-in: offset start point so we approach via arc
+    let lead_in_r = config.lead_in_radius.unwrap_or(0.0);
+    let use_lead_in = lead_in_r > 0.0;
+
+    // Start position: bottom-left corner of cut path
     let start = Point2D::new(cut_rect.min_x(), cut_rect.min_y());
+    // Lead-in approach point is offset by lead_in_r in -Y direction from start
+    let approach_point = if use_lead_in {
+        Point2D::new(start.x, start.y - lead_in_r)
+    } else {
+        start
+    };
+
     segments.push(ToolpathSegment {
         motion: Motion::Rapid,
-        endpoint: start,
+        endpoint: approach_point,
         z: config.safe_z,
     });
 
@@ -88,16 +108,28 @@ pub fn generate_profile_cut(
         // Rapid to rapid_z
         segments.push(ToolpathSegment {
             motion: Motion::Rapid,
-            endpoint: start,
+            endpoint: approach_point,
             z: config.rapid_z,
         });
 
         // Plunge to cutting depth
         segments.push(ToolpathSegment {
             motion: Motion::Linear,
-            endpoint: start,
+            endpoint: approach_point,
             z,
         });
+
+        // Arc lead-in: quarter-circle CCW arc from approach_point to start
+        if use_lead_in {
+            segments.push(ToolpathSegment {
+                motion: Motion::ArcCCW {
+                    i: 0.0,
+                    j: lead_in_r,
+                },
+                endpoint: start,
+                z,
+            });
+        }
 
         if is_final_pass && config.tabs_per_side > 0 {
             // Final pass with tabs on each side
@@ -160,10 +192,23 @@ pub fn generate_profile_cut(
         }
     }
 
-    // Retract to safe Z
+    // Arc lead-out and retract to safe Z
+    if use_lead_in {
+        // Arc lead-out: quarter-circle CW arc from start back to approach point
+        let last_z = segments.last().map(|s| s.z).unwrap_or(config.safe_z);
+        segments.push(ToolpathSegment {
+            motion: Motion::ArcCW {
+                i: 0.0,
+                j: -lead_in_r,
+            },
+            endpoint: approach_point,
+            z: last_z,
+        });
+    }
+
     segments.push(ToolpathSegment {
         motion: Motion::Rapid,
-        endpoint: start,
+        endpoint: approach_point,
         z: config.safe_z,
     });
 
@@ -598,41 +643,59 @@ pub fn generate_drill_pattern(
     for hole in holes {
         let pos = Point2D::new(hole.x, hole.y);
 
-        // Rapid to above hole
-        segments.push(ToolpathSegment {
-            motion: Motion::Rapid,
-            endpoint: pos,
-            z: config.rapid_z,
-        });
-
-        // Peck drilling: plunge in increments, retracting to clear chips
-        let num_pecks = (hole.depth / peck_depth).ceil() as u32;
-        for peck in 1..=num_pecks {
-            let peck_z = -(peck_depth * peck as f64).min(hole.depth);
-
-            // Plunge to peck depth
+        if config.use_canned_cycles {
+            // Rapid to above hole, then canned cycle
             segments.push(ToolpathSegment {
-                motion: Motion::Linear,
+                motion: Motion::Rapid,
                 endpoint: pos,
-                z: peck_z,
+                z: config.rapid_z,
+            });
+            segments.push(ToolpathSegment {
+                motion: Motion::DrillCycle {
+                    retract_z: config.rapid_z,
+                    final_z: -hole.depth,
+                    peck_depth: if hole.depth > peck_depth { peck_depth } else { 0.0 },
+                },
+                endpoint: pos,
+                z: -hole.depth,
+            });
+        } else {
+            // Rapid to above hole
+            segments.push(ToolpathSegment {
+                motion: Motion::Rapid,
+                endpoint: pos,
+                z: config.rapid_z,
             });
 
-            // Retract for chip clearing (except on last peck)
-            if peck < num_pecks {
-                segments.push(ToolpathSegment {
-                    motion: Motion::Rapid,
-                    endpoint: pos,
-                    z: config.rapid_z,
-                });
-            }
-        }
+            // Peck drilling: plunge in increments, retracting to clear chips
+            let num_pecks = (hole.depth / peck_depth).ceil() as u32;
+            for peck in 1..=num_pecks {
+                let peck_z = -(peck_depth * peck as f64).min(hole.depth);
 
-        // Full retract after hole
-        segments.push(ToolpathSegment {
-            motion: Motion::Rapid,
-            endpoint: pos,
-            z: config.rapid_z,
-        });
+                // Plunge to peck depth
+                segments.push(ToolpathSegment {
+                    motion: Motion::Linear,
+                    endpoint: pos,
+                    z: peck_z,
+                });
+
+                // Retract for chip clearing (except on last peck)
+                if peck < num_pecks {
+                    segments.push(ToolpathSegment {
+                        motion: Motion::Rapid,
+                        endpoint: pos,
+                        z: config.rapid_z,
+                    });
+                }
+            }
+
+            // Full retract after hole
+            segments.push(ToolpathSegment {
+                motion: Motion::Rapid,
+                endpoint: pos,
+                z: config.rapid_z,
+            });
+        }
     }
 
     // Final retract to safe Z
@@ -711,6 +774,10 @@ pub fn generate_shelf_pin_pattern(
 }
 
 /// Generate a simple drill operation at a single point.
+///
+/// When `config.use_canned_cycles` is true, emits a DrillCycle motion
+/// which the post-processor converts to G81/G83. Otherwise uses manual
+/// plunge moves (compatible with all controllers).
 pub fn generate_drill(
     position: Point2D,
     depth: f64,
@@ -720,33 +787,48 @@ pub fn generate_drill(
 ) -> Toolpath {
     let feed_rate = tool.recommended_feed_rate(rpm);
     let plunge_rate = feed_rate * 0.3; // slower plunge for drilling
+    let peck_depth = tool.diameter * 2.0;
 
-    let segments = vec![
+    let mut segments = vec![
         // Rapid to position
         ToolpathSegment {
             motion: Motion::Rapid,
             endpoint: position,
             z: config.safe_z,
         },
+    ];
+
+    if config.use_canned_cycles {
+        segments.push(ToolpathSegment {
+            motion: Motion::DrillCycle {
+                retract_z: config.rapid_z,
+                final_z: -depth,
+                peck_depth: if depth > peck_depth { peck_depth } else { 0.0 },
+            },
+            endpoint: position,
+            z: -depth,
+        });
+    } else {
         // Rapid down to near surface
-        ToolpathSegment {
+        segments.push(ToolpathSegment {
             motion: Motion::Rapid,
             endpoint: position,
             z: config.rapid_z,
-        },
+        });
         // Drill into material
-        ToolpathSegment {
+        segments.push(ToolpathSegment {
             motion: Motion::Linear,
             endpoint: position,
             z: -depth,
-        },
-        // Retract
-        ToolpathSegment {
-            motion: Motion::Rapid,
-            endpoint: position,
-            z: config.safe_z,
-        },
-    ];
+        });
+    }
+
+    // Retract
+    segments.push(ToolpathSegment {
+        motion: Motion::Rapid,
+        endpoint: position,
+        z: config.safe_z,
+    });
 
     Toolpath {
         tool_number: tool.number,
@@ -983,5 +1065,111 @@ mod tests {
         // Holes per column: floor(24.0 / 1.26) + 1 = 20
         // Two columns: 40 holes total, each 0.5" deep with peck at 0.5" = 1 peck each
         assert!(plunges.len() >= 38, "should have plunges for all shelf pin holes, got {}", plunges.len());
+    }
+
+    // --- Lead-in/Lead-out tests ---
+
+    #[test]
+    fn test_profile_cut_with_lead_in() {
+        let rect = Rect::from_dimensions(10.0, 5.0);
+        let tool = Tool::quarter_inch_endmill();
+        let config = CamConfig {
+            lead_in_radius: Some(0.125),
+            depth_per_pass: 0.75,
+            tabs_per_side: 0,
+            ..Default::default()
+        };
+        let tp = generate_profile_cut(&rect, 0.75, &tool, 5000.0, &config);
+
+        // Should have ArcCCW (lead-in) and ArcCW (lead-out) segments
+        let arc_ccw_count = tp.segments.iter()
+            .filter(|s| matches!(s.motion, Motion::ArcCCW { .. }))
+            .count();
+        let arc_cw_count = tp.segments.iter()
+            .filter(|s| matches!(s.motion, Motion::ArcCW { .. }))
+            .count();
+
+        assert!(arc_ccw_count > 0, "should have ArcCCW lead-in segments");
+        assert!(arc_cw_count > 0, "should have ArcCW lead-out segments");
+    }
+
+    #[test]
+    fn test_profile_cut_without_lead_in() {
+        let rect = Rect::from_dimensions(10.0, 5.0);
+        let tool = Tool::quarter_inch_endmill();
+        let config = CamConfig {
+            lead_in_radius: None,
+            depth_per_pass: 0.75,
+            tabs_per_side: 0,
+            ..Default::default()
+        };
+        let tp = generate_profile_cut(&rect, 0.75, &tool, 5000.0, &config);
+
+        // Should have no arc segments
+        let arc_count = tp.segments.iter()
+            .filter(|s| matches!(s.motion, Motion::ArcCW { .. } | Motion::ArcCCW { .. }))
+            .count();
+        assert_eq!(arc_count, 0, "should have no arcs without lead-in");
+    }
+
+    // --- Canned cycle tests ---
+
+    #[test]
+    fn test_drill_with_canned_cycle() {
+        let tool = Tool::quarter_inch_endmill();
+        let config = CamConfig {
+            use_canned_cycles: true,
+            ..Default::default()
+        };
+        let tp = generate_drill(Point2D::new(5.0, 5.0), 0.5, &tool, 5000.0, &config);
+
+        let cycle_count = tp.segments.iter()
+            .filter(|s| matches!(s.motion, Motion::DrillCycle { .. }))
+            .count();
+        assert_eq!(cycle_count, 1, "should have one DrillCycle motion");
+
+        // Verify the cycle parameters
+        if let Some(seg) = tp.segments.iter().find(|s| matches!(s.motion, Motion::DrillCycle { .. })) {
+            if let Motion::DrillCycle { retract_z, final_z, peck_depth } = seg.motion {
+                assert!((final_z - (-0.5)).abs() < 1e-10, "final_z should be -0.5");
+                assert!((retract_z - 0.25).abs() < 1e-10, "retract should be rapid_z");
+                // 0.5" depth <= peck_depth (0.5"), so peck_depth should be 0 (simple drill)
+                assert!((peck_depth - 0.0).abs() < 1e-10, "shallow hole should use G81 (peck=0)");
+            }
+        }
+    }
+
+    #[test]
+    fn test_drill_without_canned_cycle() {
+        let tool = Tool::quarter_inch_endmill();
+        let config = CamConfig::default(); // use_canned_cycles = false
+        let tp = generate_drill(Point2D::new(5.0, 5.0), 0.5, &tool, 5000.0, &config);
+
+        let cycle_count = tp.segments.iter()
+            .filter(|s| matches!(s.motion, Motion::DrillCycle { .. }))
+            .count();
+        assert_eq!(cycle_count, 0, "should have no DrillCycle without canned cycles");
+    }
+
+    #[test]
+    fn test_drill_pattern_canned_cycle_peck() {
+        let holes = vec![
+            DrillHole { x: 1.0, y: 1.0, depth: 2.0 }, // deep hole → peck
+        ];
+        let tool = Tool::quarter_inch_endmill();
+        let config = CamConfig {
+            use_canned_cycles: true,
+            ..Default::default()
+        };
+        let tp = generate_drill_pattern(&holes, &tool, 5000.0, &config);
+
+        let cycles: Vec<_> = tp.segments.iter()
+            .filter(|s| matches!(s.motion, Motion::DrillCycle { .. }))
+            .collect();
+        assert_eq!(cycles.len(), 1, "should have 1 drill cycle");
+
+        if let Motion::DrillCycle { peck_depth, .. } = cycles[0].motion {
+            assert!(peck_depth > 0.0, "deep hole should use G83 peck drilling");
+        }
     }
 }

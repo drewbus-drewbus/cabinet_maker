@@ -1,0 +1,41 @@
+# L-shaped corner cabinet: 36"x36" footprint, diagonal face.
+# Standard blind-corner or diagonal configuration for kitchen corners.
+
+[project]
+name = "Corner Cabinet"
+units = "inches"
+
+[material]
+name = "3/4\" Maple Plywood"
+thickness = 0.75
+sheet_width = 48.0
+sheet_length = 96.0
+material_type = "plywood"
+
+[cabinet]
+name = "corner_cabinet"
+cabinet_type = "corner_cabinet"
+width = 36.0
+height = 34.5
+depth = 36.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 1
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+
+corner_type = "diagonal"
+
+[cabinet.toe_kick]
+height = 4.0
+setback = 3.0
+
+[[tools]]
+number = 1
+tool_type = "endmill"
+diameter = 0.25
+flutes = 2
+cutting_length = 1.0
+description = "1/4\" 2-flute upcut endmill"

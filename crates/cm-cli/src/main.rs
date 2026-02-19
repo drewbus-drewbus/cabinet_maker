@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 use cm_cabinet::project::{Project, TaggedPart};
 use cm_cabinet::part::PartOperation;
 use cm_cam::ops::{generate_profile_cut, generate_dado_toolpath, generate_rabbet_toolpath, generate_drill, CamConfig, RabbetEdge};
-use cm_cam::Toolpath;
+use cm_cam::{Toolpath, arc_fit, optimize_rapid_order, apply_corner_fillets, FilletStyle};
 use cm_core::geometry::{Point2D, Rect};
 use cm_core::tool::Tool;
 use cm_nesting::packer::{NestingConfig, NestingPart, nest_parts};
@@ -128,12 +128,27 @@ fn run_generate(project_file: &PathBuf, cli: &Cli) -> Result<(), Box<dyn std::er
     println!("Project: {}", project.project.name);
     println!("Units: {:?}", project.project.units);
 
-    // Print cabinet info
+    // Print cabinet info and validate
     let all_cabs = project.all_cabinets();
     for cab in &all_cabs {
         println!("Cabinet: {} ({:?}, {:.1}\" x {:.1}\" x {:.1}\")",
             cab.name, cab.cabinet_type, cab.width, cab.height, cab.depth,
         );
+
+        let cab_issues = cm_cabinet::cabinet::validate_cabinet(cab);
+        for issue in &cab_issues {
+            let prefix = match issue.severity {
+                cm_cabinet::cabinet::ValidationSeverity::Warning => "WARNING",
+                cm_cabinet::cabinet::ValidationSeverity::Error => "ERROR",
+            };
+            println!("  {}: {}", prefix, issue.message);
+        }
+        let has_cab_error = cab_issues.iter().any(|i|
+            i.severity == cm_cabinet::cabinet::ValidationSeverity::Error);
+        if has_cab_error && !cli.no_validate {
+            eprintln!("Cabinet validation failed — aborting.");
+            std::process::exit(1);
+        }
     }
 
     // Load or default machine profile
@@ -250,6 +265,7 @@ fn run_generate(project_file: &PathBuf, cli: &Cli) -> Result<(), Box<dyn std::er
             kerf: 0.25,
             edge_margin: 0.5,
             allow_rotation: false,
+            guillotine_compatible: false,
         };
 
         let mut nesting_parts = Vec::new();
@@ -380,6 +396,19 @@ fn run_generate(project_file: &PathBuf, cli: &Cli) -> Result<(), Box<dyn std::er
                     positioned_rect.width, positioned_rect.height, tp_match.part.thickness);
                 sheet_toolpaths.push(tp);
             }
+
+            // Apply dog-bone corner fillets to dado/rabbet toolpaths
+            for tp in &mut sheet_toolpaths {
+                apply_corner_fillets(tp, tool.diameter / 2.0, FilletStyle::DogBone);
+            }
+
+            // Arc fit: collapse linear segments into arcs where possible
+            for tp in &mut sheet_toolpaths {
+                arc_fit(tp, 0.001);
+            }
+
+            // Optimize inter-part rapid travel order
+            optimize_rapid_order(&mut sheet_toolpaths);
 
             // Post-generation toolpath validation
             if !cli.no_validate {
@@ -560,6 +589,8 @@ fn build_project_from_parts(
             stretchers: None,
             construction: cm_cabinet::cabinet::ConstructionMethod::Frameless,
             face_frame: None,
+            corner_type: None,
+            plumbing_cutout: None,
         }),
         materials: vec![],
         cabinets: vec![],
