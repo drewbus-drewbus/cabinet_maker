@@ -1,0 +1,43 @@
+# Sink base cabinet: 36" wide, 34.5" tall, 24" deep.
+# No bottom shelf, open front for plumbing. Stretcher rails across top.
+
+[project]
+name = "Sink Base Cabinet"
+units = "inches"
+
+[material]
+name = "3/4\" Maple Plywood"
+thickness = 0.75
+sheet_width = 48.0
+sheet_length = 96.0
+material_type = "plywood"
+
+[cabinet]
+name = "sink_base"
+cabinet_type = "sink_base"
+width = 36.0
+height = 34.5
+depth = 24.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 0
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+
+[cabinet.toe_kick]
+height = 4.0
+setback = 3.0
+
+[cabinet.stretchers]
+front_width = 4.0
+has_rear = true
+
+[[tools]]
+number = 1
+tool_type = "endmill"
+diameter = 0.25
+flutes = 2
+cutting_length = 1.0
+description = "1/4\" 2-flute upcut endmill"

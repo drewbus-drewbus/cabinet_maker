@@ -1,0 +1,35 @@
+# Kitchen wall (upper) cabinet: 30" wide, 30" tall, 12" deep.
+# No toe kick. Shallower depth for upper mounting.
+
+[project]
+name = "Kitchen Wall Cabinet"
+units = "inches"
+
+[material]
+name = "3/4\" Maple Plywood"
+thickness = 0.75
+sheet_width = 48.0
+sheet_length = 96.0
+material_type = "plywood"
+
+[cabinet]
+name = "wall_cabinet"
+cabinet_type = "wall_cabinet"
+width = 30.0
+height = 30.0
+depth = 12.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 2
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+
+[[tools]]
+number = 1
+tool_type = "endmill"
+diameter = 0.25
+flutes = 2
+cutting_length = 1.0
+description = "1/4\" 2-flute upcut endmill"

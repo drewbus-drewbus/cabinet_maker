@@ -7,4 +7,5 @@ description = "CAM toolpath generation for woodworking operations"
 
 [dependencies]
 cm-core = { workspace = true }
+serde = { workspace = true }
 thiserror = { workspace = true }

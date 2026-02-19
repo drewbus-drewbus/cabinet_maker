@@ -1,7 +1,8 @@
 use cm_core::geometry::{Point2D, Rect};
+use serde::{Deserialize, Serialize};
 
 /// Configuration for the nesting algorithm.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NestingConfig {
     /// Sheet width (e.g., 48.0 for a 4'x8' sheet cut in half).
     pub sheet_width: f64,
@@ -30,7 +31,7 @@ impl Default for NestingConfig {
 }
 
 /// A part to be nested, with an ID to track it back to the source.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NestingPart {
     /// Unique identifier (e.g., "left_side", "shelf_0").
     pub id: String,
@@ -43,7 +44,7 @@ pub struct NestingPart {
 }
 
 /// A placed part on a sheet, with its position and whether it was rotated.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlacedPart {
     /// The part ID.
     pub id: String,
@@ -54,7 +55,7 @@ pub struct PlacedPart {
 }
 
 /// Layout of parts on a single sheet.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SheetLayout {
     /// Sheet index (0-based).
     pub sheet_index: usize,
@@ -69,7 +70,7 @@ pub struct SheetLayout {
 }
 
 /// Result of the nesting operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NestingResult {
     /// Layouts for each sheet used.
     pub sheets: Vec<SheetLayout>,

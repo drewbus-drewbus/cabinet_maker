@@ -51,6 +51,8 @@ pub enum PartOperation {
     Rabbet(RabbetOp),
     /// A drill hole.
     Drill(DrillOp),
+    /// A pocket hole (angled bore for pocket screws).
+    PocketHole(PocketHoleOp),
 }
 
 /// A dado cut: a rectangular groove in the face of a panel.
@@ -108,4 +110,21 @@ pub struct DrillOp {
     pub diameter: f64,
     /// Hole depth.
     pub depth: f64,
+}
+
+/// A pocket hole operation (angled bore for pocket screws).
+/// Pocket holes are often drilled off-CNC with a Kreg jig, so they
+/// appear on the cut list but may not generate CNC toolpaths.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PocketHoleOp {
+    /// X position of hole center relative to part origin.
+    pub x: f64,
+    /// Y position of hole center relative to part origin.
+    pub y: f64,
+    /// Which edge the pocket hole is oriented toward.
+    pub edge: Edge,
+    /// Whether to generate a CNC toolpath for this pocket hole.
+    /// When false, the operation appears on the cut list only.
+    #[serde(default)]
+    pub cnc_operation: bool,
 }

@@ -6,7 +6,17 @@ members = [
     "crates/cm-cam",
     "crates/cm-post",
     "crates/cm-nesting",
+    "crates/cm-import",
+    "crates/cm-joinery",
+    "crates/cm-hardware",
     "crates/cm-cli",
+]
+
+# cm-ui is excluded from the workspace because Tauri requires system libraries
+# (GTK, WebKit, libsoup) that aren't available outside the Docker build container.
+# Build cm-ui with: cd crates/cm-ui && docker compose run --rm check
+exclude = [
+    "crates/cm-ui",
 ]
 
 [workspace.package]
@@ -20,6 +30,9 @@ cm-cabinet = { path = "crates/cm-cabinet" }
 cm-cam = { path = "crates/cm-cam" }
 cm-post = { path = "crates/cm-post" }
 cm-nesting = { path = "crates/cm-nesting" }
+cm-import = { path = "crates/cm-import" }
+cm-joinery = { path = "crates/cm-joinery" }
+cm-hardware = { path = "crates/cm-hardware" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 thiserror = "2"

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/nicklason/tauri-v2-schemas/main/desktop-schema.json",
+  "productName": "Cabinet Maker",
+  "version": "0.1.0",
+  "identifier": "com.cabinetmaker.app",
+  "build": {
+    "frontendDist": "frontend/build",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "cd frontend && npm run dev",
+    "beforeBuildCommand": "cd frontend && npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Cabinet Maker",
+        "width": 1280,
+        "height": 800,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": []
+  }
+}

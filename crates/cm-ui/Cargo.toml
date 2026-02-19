@@ -1,0 +1,29 @@
+[package]
+name = "cm-ui"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Desktop GUI for Cabinet Maker (Tauri + SvelteKit)"
+
+# This crate is excluded from the main workspace because Tauri requires
+# system libraries (GTK, WebKit, libsoup). Build inside Docker:
+#   docker compose run --rm check    # compile check
+#   docker compose run --rm build    # production build
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+cm-core = { path = "../cm-core" }
+cm-cabinet = { path = "../cm-cabinet" }
+cm-cam = { path = "../cm-cam" }
+cm-post = { path = "../cm-post" }
+cm-nesting = { path = "../cm-nesting" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+thiserror = "2"
+toml = "0.8"

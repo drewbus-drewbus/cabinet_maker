@@ -7,3 +7,4 @@ description = "Rectangular bin-packing for arranging cabinet parts on sheet good
 
 [dependencies]
 cm-core = { workspace = true }
+serde = { workspace = true }

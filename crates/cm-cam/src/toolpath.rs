@@ -1,7 +1,8 @@
 use cm_core::geometry::Point2D;
+use serde::{Deserialize, Serialize};
 
 /// A complete toolpath for one operation on one part.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Toolpath {
     /// Tool number to use (references the tool library).
     pub tool_number: u32,
@@ -20,7 +21,7 @@ pub struct Toolpath {
 }
 
 /// A single segment of a toolpath.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolpathSegment {
     pub motion: Motion,
     pub endpoint: Point2D,
@@ -29,7 +30,7 @@ pub struct ToolpathSegment {
 }
 
 /// Types of CNC motion.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum Motion {
     /// G00: Rapid move (no cutting, max speed).
     Rapid,

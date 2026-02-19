@@ -1,0 +1,53 @@
+# Docker Compose for Cabinet Maker UI development
+#
+# Usage:
+#   docker compose run --rm dev bash          # Interactive shell
+#   docker compose run --rm dev cargo tauri dev   # Dev mode (needs X11 forwarding)
+#   docker compose run --rm build             # Production build
+
+services:
+  dev:
+    build: .
+    volumes:
+      - ../..:/workspace
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/workspace/crates/cm-ui/target
+    working_dir: /workspace/crates/cm-ui
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+      - CARGO_HOME=/usr/local/cargo
+    # X11 forwarding for GUI
+    volumes_from: []
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  build:
+    build: .
+    volumes:
+      - ../..:/workspace
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/workspace/crates/cm-ui/target
+    working_dir: /workspace/crates/cm-ui
+    command: >
+      bash -c "
+        cd frontend && npm install && npm run build && cd .. &&
+        cargo tauri build
+      "
+
+  # Check that Rust code compiles (no GUI needed)
+  check:
+    build: .
+    volumes:
+      - ../..:/workspace
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/workspace/crates/cm-ui/target
+    working_dir: /workspace/crates/cm-ui
+    command: >
+      bash -c "
+        cargo check &&
+        echo 'cm-ui compiles successfully'
+      "
+
+volumes:
+  cargo-cache:
+  target-cache:

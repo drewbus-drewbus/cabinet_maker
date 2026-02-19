@@ -1,0 +1,13 @@
+[package]
+name = "cm-import"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DXF/SVG file import: convert CAD designs to cabinet-maker parts"
+
+[dependencies]
+cm-core = { workspace = true }
+cm-cabinet = { workspace = true }
+dxf = "0.6"
+thiserror = { workspace = true }
+serde = { workspace = true }

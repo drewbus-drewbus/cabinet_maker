@@ -1,9 +1,11 @@
 use cm_core::geometry::{Point2D, Rect};
 use cm_core::tool::Tool;
+use serde::{Deserialize, Serialize};
 
 use crate::toolpath::{Motion, Toolpath, ToolpathSegment};
 
 /// Configuration for toolpath generation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CamConfig {
     /// Z height for rapid moves above the workpiece.
     pub safe_z: f64,
@@ -559,7 +561,7 @@ pub fn generate_rabbet_toolpath(
 }
 
 /// Which edge of a panel to apply a rabbet to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RabbetEdge {
     Top,
     Bottom,
@@ -651,7 +653,7 @@ pub fn generate_drill_pattern(
 }
 
 /// A single drill hole position and depth.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct DrillHole {
     pub x: f64,
     pub y: f64,

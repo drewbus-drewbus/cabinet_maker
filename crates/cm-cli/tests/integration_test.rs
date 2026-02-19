@@ -57,10 +57,11 @@ fn test_project_loads_from_toml() {
     let project = Project::from_toml(BOOKSHELF_TOML).expect("failed to parse TOML");
     assert_eq!(project.project.name, "Test Bookshelf");
     assert_eq!(project.project.units, Unit::Inches);
-    assert_eq!(project.cabinet.width, 36.0);
-    assert_eq!(project.cabinet.height, 30.0);
-    assert_eq!(project.cabinet.depth, 12.0);
-    assert_eq!(project.cabinet.shelf_count, 2);
+    let cab = project.cabinet.as_ref().unwrap();
+    assert_eq!(cab.width, 36.0);
+    assert_eq!(cab.height, 30.0);
+    assert_eq!(cab.depth, 12.0);
+    assert_eq!(cab.shelf_count, 2);
     assert_eq!(project.tools.len(), 1);
 }
 
@@ -68,7 +69,7 @@ fn test_project_loads_from_toml() {
 #[test]
 fn test_part_generation() {
     let project = Project::from_toml(BOOKSHELF_TOML).unwrap();
-    let parts = project.cabinet.generate_parts();
+    let parts = project.cabinet.as_ref().unwrap().generate_parts();
 
     // Expected: left_side, right_side, bottom, top, shelf (qty 2), back = 6 entries
     assert_eq!(parts.len(), 6);
@@ -90,7 +91,7 @@ fn test_part_generation() {
 #[test]
 fn test_side_panel_operations() {
     let project = Project::from_toml(BOOKSHELF_TOML).unwrap();
-    let parts = project.cabinet.generate_parts();
+    let parts = project.cabinet.as_ref().unwrap().generate_parts();
     let left = parts.iter().find(|p| p.label == "left_side").unwrap();
 
     // Should have: bottom dado + top dado + 2 shelf dados + 1 back rabbet = 5 ops
@@ -112,7 +113,7 @@ fn test_side_panel_operations() {
 #[test]
 fn test_full_pipeline_bookshelf() {
     let project = Project::from_toml(BOOKSHELF_TOML).unwrap();
-    let parts = project.cabinet.generate_parts();
+    let parts = project.cabinet.as_ref().unwrap().generate_parts();
     let machine = MachineProfile::tormach_pcnc1100();
     let tool = project.tools.first().cloned().unwrap();
     let rpm = machine.machine.max_rpm * 0.9;
@@ -157,6 +158,7 @@ fn test_full_pipeline_bookshelf() {
                     );
                     all_toolpaths.push(tp);
                 }
+                PartOperation::PocketHole(_) => {} // skip in integration tests
             }
         }
 
@@ -195,8 +197,8 @@ fn test_full_pipeline_bookshelf() {
 #[test]
 fn test_gcode_no_rapid_plunge() {
     let project = Project::from_toml(BOOKSHELF_TOML).unwrap();
-    let parts = project.cabinet.generate_parts();
-    let machine = MachineProfile::tormach_pcnc1100();
+    let parts = project.cabinet.as_ref().unwrap().generate_parts();
+    let _machine = MachineProfile::tormach_pcnc1100();
     let tool = project.tools.first().cloned().unwrap();
     let rpm = 5000.0;
     let cam_config = CamConfig::default();
@@ -230,6 +232,7 @@ fn test_gcode_no_rapid_plunge() {
                         drill.depth, &tool, rpm, &cam_config,
                     ));
                 }
+                PartOperation::PocketHole(_) => {} // skip in integration tests
             }
         }
         all_toolpaths.push(generate_profile_cut(&part.rect, part.thickness, &tool, rpm, &cam_config));
@@ -262,7 +265,7 @@ fn test_profile_cuts_have_tabs() {
     };
 
     let project = Project::from_toml(BOOKSHELF_TOML).unwrap();
-    let parts = project.cabinet.generate_parts();
+    let parts = project.cabinet.as_ref().unwrap().generate_parts();
 
     for part in &parts {
         let tp = generate_profile_cut(&part.rect, part.thickness, &tool, 5000.0, &config);
@@ -287,11 +290,12 @@ fn test_profile_cuts_have_tabs() {
 #[test]
 fn test_dado_depths_match_specification() {
     let project = Project::from_toml(BOOKSHELF_TOML).unwrap();
-    let parts = project.cabinet.generate_parts();
+    let cab = project.cabinet.as_ref().unwrap();
+    let parts = cab.generate_parts();
     let tool = Tool::quarter_inch_endmill();
     let config = CamConfig::default();
 
-    let expected_dado_depth = project.cabinet.material_thickness * project.cabinet.dado_depth_fraction;
+    let expected_dado_depth = cab.material_thickness * cab.dado_depth_fraction;
 
     let left = parts.iter().find(|p| p.label == "left_side").unwrap();
     for op in &left.operations {
@@ -330,10 +334,12 @@ fn test_project_toml_round_trip() {
     let project2 = Project::from_toml(&toml_string).expect("failed to re-parse TOML");
 
     assert_eq!(project.project.name, project2.project.name);
-    assert_eq!(project.cabinet.width, project2.cabinet.width);
-    assert_eq!(project.cabinet.height, project2.cabinet.height);
-    assert_eq!(project.cabinet.depth, project2.cabinet.depth);
-    assert_eq!(project.cabinet.shelf_count, project2.cabinet.shelf_count);
+    let cab1 = project.cabinet.as_ref().unwrap();
+    let cab2 = project2.cabinet.as_ref().unwrap();
+    assert_eq!(cab1.width, cab2.width);
+    assert_eq!(cab1.height, cab2.height);
+    assert_eq!(cab1.depth, cab2.depth);
+    assert_eq!(cab1.shelf_count, cab2.shelf_count);
 }
 
 /// Test with a minimal cabinet (no shelves, no back).
@@ -363,7 +369,7 @@ has_back = false
 "#;
 
     let project = Project::from_toml(toml).unwrap();
-    let parts = project.cabinet.generate_parts();
+    let parts = project.cabinet.as_ref().unwrap().generate_parts();
 
     // No shelves, no back: left_side, right_side, top, bottom = 4
     assert_eq!(parts.len(), 4);
@@ -421,7 +427,7 @@ has_back = false
 "#;
 
     let project = Project::from_toml(toml).unwrap();
-    let parts = project.cabinet.generate_parts();
+    let parts = project.cabinet.as_ref().unwrap().generate_parts();
     let tool = Tool::quarter_inch_endmill();
     let config = CamConfig {
         safe_z: 25.0,
@@ -441,4 +447,82 @@ has_back = false
 
     assert!(gcode.contains("G21"), "metric mode should use G21");
     assert!(!gcode.contains("G20"), "metric mode should not have G20");
+}
+
+/// Test multi-cabinet project pipeline.
+#[test]
+fn test_multi_cabinet_pipeline() {
+    let toml = r#"
+[project]
+name = "Kitchen Set"
+units = "inches"
+
+[[materials]]
+name = "3/4\" Plywood"
+thickness = 0.75
+sheet_width = 48.0
+sheet_length = 96.0
+material_type = "plywood"
+
+[[cabinets]]
+name = "base_left"
+cabinet_type = "base_cabinet"
+width = 24.0
+height = 34.5
+depth = 24.0
+material_thickness = 0.75
+shelf_count = 1
+has_back = false
+material_ref = "3/4\" Plywood"
+toe_kick = { height = 4.0, setback = 3.0 }
+
+[[cabinets]]
+name = "wall_above"
+cabinet_type = "wall_cabinet"
+width = 24.0
+height = 30.0
+depth = 12.0
+material_thickness = 0.75
+shelf_count = 2
+has_back = false
+material_ref = "3/4\" Plywood"
+
+[[tools]]
+number = 1
+tool_type = "endmill"
+diameter = 0.25
+flutes = 2
+cutting_length = 1.0
+description = "1/4\" endmill"
+"#;
+
+    let project = Project::from_toml(toml).unwrap();
+    assert_eq!(project.cabinets.len(), 2);
+    assert_eq!(project.materials.len(), 1);
+
+    let tagged = project.generate_all_parts();
+    assert!(!tagged.is_empty());
+
+    // Check that parts come from both cabinets
+    let base_parts: Vec<_> = tagged.iter().filter(|t| t.cabinet_name == "base_left").collect();
+    let wall_parts: Vec<_> = tagged.iter().filter(|t| t.cabinet_name == "wall_above").collect();
+    assert!(!base_parts.is_empty(), "should have base cabinet parts");
+    assert!(!wall_parts.is_empty(), "should have wall cabinet parts");
+
+    // Generate toolpaths for all parts
+    let tool = Tool::quarter_inch_endmill();
+    let config = CamConfig::default();
+
+    let mut all_toolpaths = Vec::new();
+    for tp in &tagged {
+        all_toolpaths.push(generate_profile_cut(&tp.part.rect, tp.part.thickness, &tool, 5000.0, &config));
+    }
+
+    let machine = MachineProfile::tormach_pcnc1100();
+    let emitter = GCodeEmitter::new(&machine, Unit::Inches);
+    let gcode = emitter.emit(&all_toolpaths);
+
+    assert!(gcode.contains("G20"));
+    assert!(gcode.contains("M30"));
+    assert!(gcode.lines().count() > 50, "multi-cabinet G-code should have substantial content");
 }
