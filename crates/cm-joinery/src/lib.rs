@@ -22,8 +22,10 @@
 //! ```
 
 pub mod rules;
+pub mod error;
 
 pub use rules::{
     Joint, JointKind, JointPosition, JoineryRuleset, JoineryRule,
     JoineryMethod, ResolvedOperation,
 };
+pub use error::JoineryError;

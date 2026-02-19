@@ -16,6 +16,9 @@ use cm_core::units::Unit;
 use cm_post::gcode::GCodeEmitter;
 use cm_post::machine::MachineProfile;
 
+// External crate used by integration tests (re-exported from cm-cli)
+extern crate cm_hardware;
+
 const BOOKSHELF_TOML: &str = r#"
 [project]
 name = "Test Bookshelf"
@@ -158,7 +161,12 @@ fn test_full_pipeline_bookshelf() {
                     );
                     all_toolpaths.push(tp);
                 }
-                PartOperation::PocketHole(_) => {} // skip in integration tests
+                PartOperation::PocketHole(_)
+                | PartOperation::Dovetail(_)
+                | PartOperation::BoxJoint(_)
+                | PartOperation::Mortise(_)
+                | PartOperation::Tenon(_)
+                | PartOperation::Dowel(_) => {} // skip in integration tests
             }
         }
 
@@ -232,7 +240,12 @@ fn test_gcode_no_rapid_plunge() {
                         drill.depth, &tool, rpm, &cam_config,
                     ));
                 }
-                PartOperation::PocketHole(_) => {} // skip in integration tests
+                PartOperation::PocketHole(_)
+                | PartOperation::Dovetail(_)
+                | PartOperation::BoxJoint(_)
+                | PartOperation::Mortise(_)
+                | PartOperation::Tenon(_)
+                | PartOperation::Dowel(_) => {} // skip in integration tests
             }
         }
         all_toolpaths.push(generate_profile_cut(&part.rect, part.thickness, &tool, rpm, &cam_config));
@@ -447,6 +460,279 @@ has_back = false
 
     assert!(gcode.contains("G21"), "metric mode should use G21");
     assert!(!gcode.contains("G20"), "metric mode should not have G20");
+}
+
+/// Test hardware drill operations appear in G-code for a wall cabinet.
+#[test]
+fn test_hardware_ops_generate_drill_gcode() {
+    let toml = r#"
+[project]
+name = "Hardware Test"
+units = "inches"
+
+[material]
+name = "3/4\" Plywood"
+thickness = 0.75
+sheet_width = 48.0
+sheet_length = 96.0
+material_type = "plywood"
+
+[cabinet]
+name = "wall"
+cabinet_type = "wall_cabinet"
+width = 30.0
+height = 30.0
+depth = 12.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 2
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+
+[[tools]]
+number = 1
+tool_type = "endmill"
+diameter = 0.25
+flutes = 2
+cutting_length = 1.0
+description = "1/4\" endmill"
+"#;
+
+    let project = Project::from_toml(toml).unwrap();
+    let mut tagged_parts = project.generate_all_parts();
+
+    // Inject hardware operations (same as CLI does)
+    let all_cabs = project.all_cabinets();
+    for entry in &all_cabs {
+        let hw_ops = cm_hardware::generate_all_hardware_ops(&entry);
+        for hw_op in hw_ops {
+            if let Some(tp) = tagged_parts.iter_mut().find(|tp|
+                tp.cabinet_name == entry.name && tp.part.label == hw_op.target_part
+            ) {
+                tp.part.operations.push(hw_op.operation);
+            }
+        }
+    }
+
+    // Count total drill operations injected
+    let total_drills: usize = tagged_parts.iter()
+        .flat_map(|tp| tp.part.operations.iter())
+        .filter(|op| matches!(op, PartOperation::Drill(_)))
+        .count();
+    assert!(total_drills > 0, "hardware injection should add drill operations");
+
+    // Generate toolpaths including drills
+    let tool = project.tools.first().cloned().unwrap();
+    let machine = MachineProfile::tormach_pcnc1100();
+    let rpm = machine.machine.max_rpm * 0.9;
+    let cam_config = CamConfig {
+        safe_z: machine.post.safe_z,
+        rapid_z: machine.post.rapid_z,
+        ..Default::default()
+    };
+
+    let mut all_toolpaths = Vec::new();
+    for tp in &tagged_parts {
+        for op in &tp.part.operations {
+            match op {
+                PartOperation::Dado(dado) => {
+                    let horizontal = dado.orientation == DadoOrientation::Horizontal;
+                    all_toolpaths.push(generate_dado_toolpath(
+                        &tp.part.rect, dado.position, dado.width, dado.depth,
+                        horizontal, &tool, rpm, &cam_config,
+                    ));
+                }
+                PartOperation::Rabbet(rabbet) => {
+                    let edge = match rabbet.edge {
+                        cm_cabinet::part::Edge::Top => RabbetEdge::Top,
+                        cm_cabinet::part::Edge::Bottom => RabbetEdge::Bottom,
+                        cm_cabinet::part::Edge::Left => RabbetEdge::Left,
+                        cm_cabinet::part::Edge::Right => RabbetEdge::Right,
+                    };
+                    all_toolpaths.push(generate_rabbet_toolpath(
+                        &tp.part.rect, edge, rabbet.width, rabbet.depth,
+                        &tool, rpm, &cam_config,
+                    ));
+                }
+                PartOperation::Drill(drill) => {
+                    all_toolpaths.push(generate_drill(
+                        Point2D::new(tp.part.rect.min_x() + drill.x, tp.part.rect.min_y() + drill.y),
+                        drill.depth, &tool, rpm, &cam_config,
+                    ));
+                }
+                _ => {}
+            }
+        }
+        all_toolpaths.push(generate_profile_cut(&tp.part.rect, tp.part.thickness, &tool, rpm, &cam_config));
+    }
+
+    // Emit G-code
+    let emitter = GCodeEmitter::new(&machine, Unit::Inches);
+    let gcode = emitter.emit(&all_toolpaths);
+
+    // G-code should be longer with hardware drills than without
+    assert!(gcode.lines().count() > 200,
+        "G-code with hardware should be substantial, got {} lines", gcode.lines().count());
+
+    // Verify drill operations are present — at least shelf pin holes on both sides
+    // plus hinge mounting plate holes
+    assert!(total_drills >= 20,
+        "wall cabinet should have many drill ops (shelf pins + hinge plates), got {}", total_drills);
+}
+
+/// Test that hardware ops target only existing part labels.
+#[test]
+fn test_hardware_ops_target_valid_parts() {
+    let toml = r#"
+[project]
+name = "Label Test"
+units = "inches"
+
+[material]
+name = "3/4\" Plywood"
+thickness = 0.75
+sheet_width = 48.0
+sheet_length = 96.0
+material_type = "plywood"
+
+[cabinet]
+name = "box"
+cabinet_type = "basic_box"
+width = 24.0
+height = 24.0
+depth = 12.0
+material_thickness = 0.75
+shelf_count = 2
+has_back = true
+back_joinery = "rabbet"
+
+[[tools]]
+number = 1
+tool_type = "endmill"
+diameter = 0.25
+flutes = 2
+cutting_length = 1.0
+"#;
+
+    let project = Project::from_toml(toml).unwrap();
+    let tagged_parts = project.generate_all_parts();
+
+    let all_cabs = project.all_cabinets();
+    for entry in &all_cabs {
+        let hw_ops = cm_hardware::generate_all_hardware_ops(&entry);
+
+        // Get the set of part labels that actually exist
+        let part_labels: Vec<&str> = tagged_parts.iter()
+            .filter(|tp| tp.cabinet_name == entry.name)
+            .map(|tp| tp.part.label.as_str())
+            .collect();
+
+        for hw_op in &hw_ops {
+            assert!(
+                part_labels.contains(&hw_op.target_part.as_str()),
+                "hardware op targets '{}' which doesn't exist in cabinet '{}'. Valid labels: {:?}",
+                hw_op.target_part, entry.name, part_labels
+            );
+        }
+    }
+}
+
+/// Test that the bookshelf project generates correct parts for BOM.
+#[test]
+fn test_bookshelf_parts_for_bom() {
+    let project = Project::from_toml(BOOKSHELF_TOML).unwrap();
+    let tagged_parts = project.generate_all_parts();
+
+    // Should have 6 tagged part entries for the bookshelf
+    assert_eq!(tagged_parts.len(), 6, "bookshelf should have 6 part types");
+
+    // Verify part labels
+    let labels: Vec<&str> = tagged_parts.iter().map(|tp| tp.part.label.as_str()).collect();
+    assert!(labels.contains(&"left_side"));
+    assert!(labels.contains(&"right_side"));
+    assert!(labels.contains(&"top"));
+    assert!(labels.contains(&"bottom"));
+    assert!(labels.contains(&"shelf"));
+    assert!(labels.contains(&"back"));
+
+    // Verify shelf has quantity 2
+    let shelf = tagged_parts.iter().find(|tp| tp.part.label == "shelf").unwrap();
+    assert_eq!(shelf.part.quantity, 2);
+
+    // Verify back is thinner
+    let back = tagged_parts.iter().find(|tp| tp.part.label == "back").unwrap();
+    assert!((back.part.thickness - 0.25).abs() < 1e-10, "back should be 1/4\"");
+
+    // Verify all parts have a cabinet name
+    for tp in &tagged_parts {
+        assert_eq!(tp.cabinet_name, "bookshelf");
+        assert!(!tp.material_name.is_empty(), "part {} should have a material name", tp.part.label);
+    }
+
+    // Verify material density is available
+    for tp in &tagged_parts {
+        assert!(tp.material.effective_density() > 0.0,
+            "material for {} should have positive density", tp.part.label);
+    }
+}
+
+/// Test that advanced joinery operations generate valid toolpaths.
+#[test]
+fn test_advanced_joinery_cam_pipeline() {
+    use cm_cam::ops::{
+        generate_dovetail_toolpath, generate_box_joint_toolpath,
+        generate_mortise_toolpath, generate_tenon_toolpath,
+        generate_dowel_holes, DovetailEdge,
+    };
+    use cm_core::geometry::Rect;
+
+    let tool = Tool::quarter_inch_endmill();
+    let config = CamConfig::default();
+    let rect = Rect::from_dimensions(6.0, 4.0);
+    let machine = MachineProfile::tormach_pcnc1100();
+
+    // Generate toolpaths for each new operation type
+    let dovetail_tp = generate_dovetail_toolpath(
+        &rect, DovetailEdge::Bottom, 4, 0.5, 0.25, 0.75,
+        &tool, 5000.0, &config,
+    );
+    let box_joint_tp = generate_box_joint_toolpath(
+        &rect, DovetailEdge::Bottom, 0.5, 8, 0.75,
+        &tool, 5000.0, &config,
+    );
+    let mortise_tp = generate_mortise_toolpath(
+        &rect, 3.0, 2.0, 0.375, 1.0, 0.75,
+        &tool, 5000.0, &config,
+    );
+    let tenon_tp = generate_tenon_toolpath(
+        &rect, DovetailEdge::Left, 0.375, 1.0, 1.0, 0.25,
+        &tool, 5000.0, &config,
+    );
+    let dowel_tp = generate_dowel_holes(
+        &rect, &[(1.0, 1.0), (1.0, 3.0)], 0.315, 0.5,
+        &tool, 5000.0, &config,
+    );
+
+    let all_toolpaths = vec![dovetail_tp, box_joint_tp, mortise_tp, tenon_tp, dowel_tp];
+
+    // Emit G-code — should not panic
+    let emitter = GCodeEmitter::new(&machine, Unit::Inches);
+    let gcode = emitter.emit(&all_toolpaths);
+
+    assert!(gcode.contains("G20"), "should have inch mode");
+    assert!(gcode.contains("G01"), "should have linear feed moves");
+    assert!(gcode.contains("M30"), "should end program");
+
+    // Verify no rapid moves below Z=0 (safety check)
+    for tp in &all_toolpaths {
+        for seg in &tp.segments {
+            if matches!(seg.motion, Motion::Rapid) {
+                assert!(seg.z >= 0.0, "rapid at z={} in toolpath", seg.z);
+            }
+        }
+    }
 }
 
 /// Test multi-cabinet project pipeline.

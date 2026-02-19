@@ -1,6 +1,9 @@
 //! Joinery rules: maps joint declarations to concrete operations.
 
-use cm_cabinet::part::{DadoOp, DadoOrientation, Edge, PartOperation, RabbetOp, PocketHoleOp};
+use cm_cabinet::part::{
+    DadoOp, DadoOrientation, Edge, PartOperation, RabbetOp, PocketHoleOp,
+    DovetailOp, DovetailStyle, BoxJointOp, MortiseOp, TenonOp, DowelOp, DowelHole,
+};
 use cm_core::material::MaterialType;
 use serde::{Deserialize, Serialize};
 
@@ -69,6 +72,14 @@ pub enum JoineryMethod {
     Biscuit,
     /// Dowel joint (holes for dowel pins).
     Dowel,
+    /// Through dovetail joint.
+    Dovetail,
+    /// Half-blind dovetail joint.
+    HalfBlindDovetail,
+    /// Box (finger) joint.
+    BoxJoint,
+    /// Mortise and tenon joint.
+    MortiseTenon,
 }
 
 /// A rule that maps a joint kind + material type to a joinery method.
@@ -164,6 +175,14 @@ impl Default for JoineryRuleset {
                     material_type: None,
                     method: JoineryMethod::Rabbet,
                     depth_fraction: 0.5,
+                    cnc_operation: true,
+                },
+                // Rail to stile in hardwood → mortise and tenon
+                JoineryRule {
+                    joint_kind: JointKind::RailToStile,
+                    material_type: Some(MaterialType::Hardwood),
+                    method: JoineryMethod::MortiseTenon,
+                    depth_fraction: 0.667,
                     cnc_operation: true,
                 },
                 // Rail to stile (face frame) → pocket hole
@@ -304,9 +323,135 @@ impl JoineryRuleset {
                         }),
                     });
                 }
-                JoineryMethod::Butt | JoineryMethod::Biscuit | JoineryMethod::Dowel => {
-                    // No CNC operations for butt joints.
-                    // Biscuit/dowel could generate slot/drill ops in the future.
+                JoineryMethod::Dovetail => {
+                    let edge = match joint.position {
+                        JointPosition::Edge(e) => e,
+                        _ => Edge::Left,
+                    };
+                    // Calculate tail count based on mating part width
+                    // Target: each tail ~0.75" wide, minimum 2 tails
+                    let approx_tail_width = 0.75;
+                    let tail_count = ((joint.mating_thickness * 2.0) / approx_tail_width)
+                        .round()
+                        .max(2.0) as u32;
+                    let pin_width = joint.mating_thickness / (tail_count * 2 + 1) as f64;
+                    let tail_width = pin_width * 2.0;
+
+                    ops.push(ResolvedOperation {
+                        target_part: joint.target_part.clone(),
+                        operation: PartOperation::Dovetail(DovetailOp {
+                            edge,
+                            tail_count,
+                            tail_width,
+                            pin_width,
+                            depth: joint.mating_thickness,
+                            angle: 8.0,
+                            style: DovetailStyle::Through,
+                        }),
+                    });
+                }
+                JoineryMethod::HalfBlindDovetail => {
+                    let edge = match joint.position {
+                        JointPosition::Edge(e) => e,
+                        _ => Edge::Left,
+                    };
+                    let tail_count = ((joint.mating_thickness * 2.0) / 0.75)
+                        .round()
+                        .max(2.0) as u32;
+                    let pin_width = joint.mating_thickness / (tail_count * 2 + 1) as f64;
+                    let tail_width = pin_width * 2.0;
+
+                    ops.push(ResolvedOperation {
+                        target_part: joint.target_part.clone(),
+                        operation: PartOperation::Dovetail(DovetailOp {
+                            edge,
+                            tail_count,
+                            tail_width,
+                            pin_width,
+                            depth: joint.mating_thickness * 2.0 / 3.0, // 2/3 thickness
+                            angle: 8.0,
+                            style: DovetailStyle::HalfBlind,
+                        }),
+                    });
+                }
+                JoineryMethod::BoxJoint => {
+                    let edge = match joint.position {
+                        JointPosition::Edge(e) => e,
+                        _ => Edge::Left,
+                    };
+                    // Finger width = mating thickness for even fingers
+                    let finger_width = joint.mating_thickness;
+                    let finger_count = (target_thickness / finger_width).round().max(2.0) as u32;
+
+                    ops.push(ResolvedOperation {
+                        target_part: joint.target_part.clone(),
+                        operation: PartOperation::BoxJoint(BoxJointOp {
+                            edge,
+                            finger_width,
+                            depth: joint.mating_thickness,
+                            finger_count,
+                        }),
+                    });
+                }
+                JoineryMethod::MortiseTenon => {
+                    // Generate mortise on target and tenon on mating part.
+                    let position_y = match joint.position {
+                        JointPosition::Horizontal(y) => y,
+                        JointPosition::Edge(Edge::Top) => target_thickness - joint.mating_thickness / 2.0,
+                        JointPosition::Edge(Edge::Bottom) => joint.mating_thickness / 2.0,
+                        _ => target_thickness / 2.0,
+                    };
+                    let mortise_width = joint.mating_thickness / 3.0;
+                    let mortise_length = joint.mating_thickness;
+                    let mortise_depth = depth;
+
+                    ops.push(ResolvedOperation {
+                        target_part: joint.target_part.clone(),
+                        operation: PartOperation::Mortise(MortiseOp {
+                            x: target_thickness / 2.0,
+                            y: position_y,
+                            width: mortise_width,
+                            length: mortise_length,
+                            depth: mortise_depth,
+                        }),
+                    });
+
+                    ops.push(ResolvedOperation {
+                        target_part: joint.mating_part.clone(),
+                        operation: PartOperation::Tenon(TenonOp {
+                            edge: match joint.position {
+                                JointPosition::Edge(e) => e,
+                                _ => Edge::Left,
+                            },
+                            thickness: mortise_width,
+                            width: mortise_length,
+                            length: mortise_depth,
+                            shoulder_depth: (joint.mating_thickness - mortise_width) / 2.0,
+                        }),
+                    });
+                }
+                JoineryMethod::Dowel => {
+                    // Generate 2-3 dowel holes depending on joint width
+                    let hole_count = if joint.mating_thickness >= 1.5 { 3 } else { 2 };
+                    let spacing = joint.mating_thickness / (hole_count + 1) as f64;
+                    let holes: Vec<DowelHole> = (1..=hole_count)
+                        .map(|i| DowelHole {
+                            x: target_thickness / 2.0,
+                            y: spacing * i as f64,
+                        })
+                        .collect();
+
+                    ops.push(ResolvedOperation {
+                        target_part: joint.target_part.clone(),
+                        operation: PartOperation::Dowel(DowelOp {
+                            holes,
+                            dowel_diameter: 0.315, // 8mm standard
+                            depth: depth.max(0.375),
+                        }),
+                    });
+                }
+                JoineryMethod::Butt | JoineryMethod::Biscuit => {
+                    // No CNC operations for butt joints or biscuit (biscuit joiner is handheld).
                 }
             }
         }
@@ -458,7 +603,8 @@ mod tests {
             Joint::rail_to_stile("stile", "rail", 1.5),
         ];
 
-        let ops = rules.resolve(&joints, 0.75, MaterialType::Hardwood);
+        // Plywood uses the catch-all PocketHole rule (Hardwood now uses MortiseTenon)
+        let ops = rules.resolve(&joints, 0.75, MaterialType::Plywood);
         assert_eq!(ops.len(), 1);
         // Pocket hole goes on the mating part (rail), not the target (stile)
         assert_eq!(ops[0].target_part, "rail");
@@ -541,6 +687,176 @@ mod tests {
         let toml = rules.to_toml().unwrap();
         let rules2 = JoineryRuleset::from_toml(&toml).unwrap();
         assert_eq!(rules.rules.len(), rules2.rules.len());
+    }
+
+    #[test]
+    fn test_dovetail_resolution() {
+        let rules = JoineryRuleset {
+            rules: vec![JoineryRule {
+                joint_kind: JointKind::DrawerCorner,
+                material_type: None,
+                method: JoineryMethod::Dovetail,
+                depth_fraction: 1.0,
+                cnc_operation: true,
+            }],
+        };
+        let joints = vec![
+            Joint::drawer_corner("drawer_front", "drawer_side", Edge::Left, 0.5),
+        ];
+        let ops = rules.resolve(&joints, 0.5, MaterialType::Hardwood);
+        assert_eq!(ops.len(), 1);
+        match &ops[0].operation {
+            PartOperation::Dovetail(d) => {
+                assert_eq!(d.style, DovetailStyle::Through);
+                assert!(d.tail_count >= 2);
+                assert!((d.depth - 0.5).abs() < 1e-10);
+            }
+            other => panic!("expected Dovetail, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_half_blind_dovetail_resolution() {
+        let rules = JoineryRuleset {
+            rules: vec![JoineryRule {
+                joint_kind: JointKind::DrawerCorner,
+                material_type: None,
+                method: JoineryMethod::HalfBlindDovetail,
+                depth_fraction: 0.667,
+                cnc_operation: true,
+            }],
+        };
+        let joints = vec![
+            Joint::drawer_corner("drawer_front", "drawer_side", Edge::Left, 0.75),
+        ];
+        let ops = rules.resolve(&joints, 0.75, MaterialType::Hardwood);
+        assert_eq!(ops.len(), 1);
+        match &ops[0].operation {
+            PartOperation::Dovetail(d) => {
+                assert_eq!(d.style, DovetailStyle::HalfBlind);
+                // depth = 2/3 of mating_thickness = 0.5
+                assert!((d.depth - 0.5).abs() < 1e-10);
+            }
+            other => panic!("expected Dovetail, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_box_joint_resolution() {
+        let rules = JoineryRuleset {
+            rules: vec![JoineryRule {
+                joint_kind: JointKind::DrawerCorner,
+                material_type: None,
+                method: JoineryMethod::BoxJoint,
+                depth_fraction: 1.0,
+                cnc_operation: true,
+            }],
+        };
+        let joints = vec![
+            Joint::drawer_corner("drawer_front", "drawer_side", Edge::Left, 0.5),
+        ];
+        let ops = rules.resolve(&joints, 0.5, MaterialType::Hardwood);
+        assert_eq!(ops.len(), 1);
+        match &ops[0].operation {
+            PartOperation::BoxJoint(b) => {
+                assert!(b.finger_count >= 2);
+                assert!((b.depth - 0.5).abs() < 1e-10);
+                assert!((b.finger_width - 0.5).abs() < 1e-10);
+            }
+            other => panic!("expected BoxJoint, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_mortise_tenon_generates_both_ops() {
+        let rules = JoineryRuleset::default();
+        let joints = vec![
+            Joint::rail_to_stile("stile", "rail", 1.5),
+        ];
+        // Hardwood triggers MortiseTenon rule (added in Phase 16b)
+        let ops = rules.resolve(&joints, 1.5, MaterialType::Hardwood);
+        assert_eq!(ops.len(), 2, "MortiseTenon should generate mortise + tenon");
+
+        let mortise = ops.iter().find(|o| matches!(o.operation, PartOperation::Mortise(_)));
+        assert!(mortise.is_some(), "should have a Mortise operation");
+        assert_eq!(mortise.unwrap().target_part, "stile");
+
+        let tenon = ops.iter().find(|o| matches!(o.operation, PartOperation::Tenon(_)));
+        assert!(tenon.is_some(), "should have a Tenon operation");
+        assert_eq!(tenon.unwrap().target_part, "rail");
+    }
+
+    #[test]
+    fn test_dowel_resolution() {
+        let rules = JoineryRuleset {
+            rules: vec![JoineryRule {
+                joint_kind: JointKind::ShelfToSide,
+                material_type: None,
+                method: JoineryMethod::Dowel,
+                depth_fraction: 0.5,
+                cnc_operation: true,
+            }],
+        };
+        let joints = vec![
+            Joint::shelf_to_side("left_side", "shelf", 10.0, 0.75),
+        ];
+        let ops = rules.resolve(&joints, 0.75, MaterialType::Hardwood);
+        assert_eq!(ops.len(), 1);
+        match &ops[0].operation {
+            PartOperation::Dowel(d) => {
+                assert!(d.holes.len() >= 2, "should have at least 2 dowel holes");
+                assert!((d.dowel_diameter - 0.315).abs() < 1e-10, "should be 8mm dowels");
+            }
+            other => panic!("expected Dowel, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_serde_round_trip_new_operations() {
+        // Test that the new PartOperation variants serialize/deserialize correctly
+        let ops = vec![
+            PartOperation::Dovetail(DovetailOp {
+                edge: Edge::Left,
+                tail_count: 4,
+                tail_width: 0.5,
+                pin_width: 0.25,
+                depth: 0.75,
+                angle: 8.0,
+                style: DovetailStyle::Through,
+            }),
+            PartOperation::BoxJoint(BoxJointOp {
+                edge: Edge::Bottom,
+                finger_width: 0.5,
+                depth: 0.75,
+                finger_count: 6,
+            }),
+            PartOperation::Mortise(MortiseOp {
+                x: 1.0, y: 5.0, width: 0.375, length: 1.0, depth: 1.0,
+            }),
+            PartOperation::Tenon(TenonOp {
+                edge: Edge::Left,
+                thickness: 0.375,
+                width: 1.0,
+                length: 1.0,
+                shoulder_depth: 0.1875,
+            }),
+            PartOperation::Dowel(DowelOp {
+                holes: vec![
+                    DowelHole { x: 0.5, y: 1.0 },
+                    DowelHole { x: 0.5, y: 2.0 },
+                ],
+                dowel_diameter: 0.315,
+                depth: 0.5,
+            }),
+        ];
+
+        for op in &ops {
+            let json = serde_json::to_string(op).expect("serialize");
+            let op2: PartOperation = serde_json::from_str(&json).expect("deserialize");
+            // Just verify it round-trips without panic
+            let json2 = serde_json::to_string(&op2).expect("re-serialize");
+            assert_eq!(json, json2);
+        }
     }
 
     #[test]

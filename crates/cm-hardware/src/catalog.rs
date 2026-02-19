@@ -12,6 +12,12 @@ pub struct Hardware {
     pub description: String,
     /// The kind of hardware and its boring specification.
     pub kind: HardwareKind,
+    /// Unit price in dollars (optional, for BOM costing).
+    #[serde(default)]
+    pub unit_price: Option<f64>,
+    /// Unit weight in ounces (optional, for weight estimation).
+    #[serde(default)]
+    pub unit_weight_oz: Option<f64>,
 }
 
 /// The type-specific boring specification.
@@ -668,6 +674,8 @@ impl Hardware {
             id: "blum-clip-top-110".into(),
             description: "Blum Clip Top 110° concealed hinge".into(),
             kind: HardwareKind::Hinge(HingeSpec::default()),
+            unit_price: Some(3.50),
+            unit_weight_oz: Some(3.2),
         }
     }
 
@@ -677,6 +685,8 @@ impl Hardware {
             id: "5mm-shelf-pin".into(),
             description: "5mm shelf pin system (32mm spacing)".into(),
             kind: HardwareKind::ShelfPin(ShelfPinSpec::default()),
+            unit_price: Some(0.15),
+            unit_weight_oz: Some(0.1),
         }
     }
 
@@ -686,6 +696,8 @@ impl Hardware {
             id: "side-mount-slide".into(),
             description: "Side-mount ball bearing drawer slide".into(),
             kind: HardwareKind::Slide(SlideSpec::default()),
+            unit_price: Some(12.00),
+            unit_weight_oz: Some(16.0),
         }
     }
 
@@ -696,9 +708,11 @@ impl Hardware {
             description: "Undermount full-extension drawer slide".into(),
             kind: HardwareKind::Slide(SlideSpec {
                 mount: SlideMount::Undermount,
-                clearance_per_side: 0.125, // undermount needs less side clearance
+                clearance_per_side: 0.125,
                 ..Default::default()
             }),
+            unit_price: Some(35.00),
+            unit_weight_oz: Some(24.0),
         }
     }
 
@@ -711,6 +725,8 @@ impl Hardware {
                 hole_spacing: 3.0,
                 ..Default::default()
             }),
+            unit_price: Some(4.00),
+            unit_weight_oz: Some(2.0),
         }
     }
 
@@ -723,6 +739,8 @@ impl Hardware {
                 hole_spacing: 0.0,
                 ..Default::default()
             }),
+            unit_price: Some(2.50),
+            unit_weight_oz: Some(1.5),
         }
     }
 
@@ -732,6 +750,8 @@ impl Hardware {
             id: "confirmat-7x50".into(),
             description: "7x50mm confirmat assembly screw".into(),
             kind: HardwareKind::Confirmat(ConfirmatSpec::default()),
+            unit_price: Some(0.25),
+            unit_weight_oz: Some(0.3),
         }
     }
 
@@ -741,6 +761,8 @@ impl Hardware {
             id: "cam-lock-15mm".into(),
             description: "15mm cam lock fastener".into(),
             kind: HardwareKind::CamLock(CamLockSpec::default()),
+            unit_price: Some(1.50),
+            unit_weight_oz: Some(0.5),
         }
     }
 
@@ -750,6 +772,8 @@ impl Hardware {
             id: "pvc-edge-2mm".into(),
             description: "2mm PVC edge banding (pre-glued)".into(),
             kind: HardwareKind::EdgeBand(EdgeBandSpec::default()),
+            unit_price: Some(0.50),   // per linear foot
+            unit_weight_oz: Some(0.3), // per linear foot
         }
     }
 
@@ -759,10 +783,12 @@ impl Hardware {
             id: "pvc-edge-0.5mm".into(),
             description: "0.5mm PVC edge banding (pre-glued)".into(),
             kind: HardwareKind::EdgeBand(EdgeBandSpec {
-                thickness: 0.020, // 0.5mm
+                thickness: 0.020,
                 material_type: EdgeBandMaterial::Pvc,
                 pre_glued: true,
             }),
+            unit_price: Some(0.30),
+            unit_weight_oz: Some(0.1),
         }
     }
 
@@ -772,10 +798,12 @@ impl Hardware {
             id: "wood-edge-2mm".into(),
             description: "2mm wood veneer edge banding".into(),
             kind: HardwareKind::EdgeBand(EdgeBandSpec {
-                thickness: 0.079, // 2mm
+                thickness: 0.079,
                 material_type: EdgeBandMaterial::Wood,
                 pre_glued: false,
             }),
+            unit_price: Some(1.00),
+            unit_weight_oz: Some(0.5),
         }
     }
 }
@@ -1090,5 +1118,86 @@ mod tests {
         let hw2: Hardware = toml::from_str(&toml_str).unwrap();
         assert_eq!(hw.id, hw2.id);
         assert!(matches!(hw2.kind, HardwareKind::EdgeBand(_)));
+    }
+
+    // --- Phase 16d: unit_price and unit_weight_oz tests ---
+
+    #[test]
+    fn test_all_builtin_hardware_have_prices() {
+        let items: Vec<Hardware> = vec![
+            Hardware::blum_clip_top_110(),
+            Hardware::shelf_pin_5mm(),
+            Hardware::side_mount_slide(),
+            Hardware::undermount_slide(),
+            Hardware::bar_pull_3in(),
+            Hardware::knob(),
+            Hardware::confirmat_7x50(),
+            Hardware::cam_lock_15mm(),
+            Hardware::pvc_edge_2mm(),
+            Hardware::pvc_edge_thin(),
+            Hardware::wood_edge_2mm(),
+        ];
+        for hw in &items {
+            assert!(hw.unit_price.is_some(), "{} should have a unit price", hw.id);
+            assert!(hw.unit_price.unwrap() > 0.0, "{} price should be positive", hw.id);
+        }
+    }
+
+    #[test]
+    fn test_all_builtin_hardware_have_weights() {
+        let items: Vec<Hardware> = vec![
+            Hardware::blum_clip_top_110(),
+            Hardware::shelf_pin_5mm(),
+            Hardware::side_mount_slide(),
+            Hardware::undermount_slide(),
+            Hardware::bar_pull_3in(),
+            Hardware::knob(),
+            Hardware::confirmat_7x50(),
+            Hardware::cam_lock_15mm(),
+            Hardware::pvc_edge_2mm(),
+            Hardware::pvc_edge_thin(),
+            Hardware::wood_edge_2mm(),
+        ];
+        for hw in &items {
+            assert!(hw.unit_weight_oz.is_some(), "{} should have a unit weight", hw.id);
+            assert!(hw.unit_weight_oz.unwrap() > 0.0, "{} weight should be positive", hw.id);
+        }
+    }
+
+    #[test]
+    fn test_hardware_price_values() {
+        assert!((Hardware::blum_clip_top_110().unit_price.unwrap() - 3.50).abs() < 1e-10);
+        assert!((Hardware::shelf_pin_5mm().unit_price.unwrap() - 0.15).abs() < 1e-10);
+        assert!((Hardware::side_mount_slide().unit_price.unwrap() - 12.00).abs() < 1e-10);
+        assert!((Hardware::undermount_slide().unit_price.unwrap() - 35.00).abs() < 1e-10);
+        assert!((Hardware::bar_pull_3in().unit_price.unwrap() - 4.00).abs() < 1e-10);
+        assert!((Hardware::knob().unit_price.unwrap() - 2.50).abs() < 1e-10);
+        assert!((Hardware::confirmat_7x50().unit_price.unwrap() - 0.25).abs() < 1e-10);
+        assert!((Hardware::cam_lock_15mm().unit_price.unwrap() - 1.50).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_hardware_weight_values() {
+        assert!((Hardware::blum_clip_top_110().unit_weight_oz.unwrap() - 3.2).abs() < 1e-10);
+        assert!((Hardware::shelf_pin_5mm().unit_weight_oz.unwrap() - 0.1).abs() < 1e-10);
+        assert!((Hardware::side_mount_slide().unit_weight_oz.unwrap() - 16.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_hardware_price_serialization_round_trip() {
+        let hw = Hardware::blum_clip_top_110();
+        let json = serde_json::to_string(&hw).unwrap();
+        let hw2: Hardware = serde_json::from_str(&json).unwrap();
+        assert_eq!(hw.unit_price, hw2.unit_price);
+        assert_eq!(hw.unit_weight_oz, hw2.unit_weight_oz);
+    }
+
+    #[test]
+    fn test_hardware_no_price_defaults_to_none() {
+        // Deserializing hardware without price/weight should give None
+        let json = r#"{"id":"custom","description":"custom item","kind":{"type":"shelf_pin","pin_diameter":0.197,"pin_depth":0.375,"row_spacing":1.26,"front_setback":2.0,"rear_setback":2.0,"margin_top":2.0,"margin_bottom":2.0}}"#;
+        let hw: Hardware = serde_json::from_str(json).unwrap();
+        assert_eq!(hw.unit_price, None);
+        assert_eq!(hw.unit_weight_oz, None);
     }
 }

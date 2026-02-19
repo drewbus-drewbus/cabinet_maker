@@ -307,6 +307,7 @@ version = "0.1.0"
 dependencies = [
  "cm-core",
  "serde",
+ "serde_json",
  "thiserror",
  "toml",
 ]
@@ -328,6 +329,7 @@ dependencies = [
  "cm-cabinet",
  "cm-cam",
  "cm-core",
+ "cm-hardware",
  "cm-import",
  "cm-nesting",
  "cm-post",
@@ -341,7 +343,9 @@ name = "cm-core"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
  "thiserror",
+ "toml",
 ]
 
 [[package]]
@@ -351,6 +355,8 @@ dependencies = [
  "cm-cabinet",
  "cm-core",
  "serde",
+ "serde_json",
+ "thiserror",
  "toml",
 ]
 
@@ -372,6 +378,8 @@ dependencies = [
  "cm-cabinet",
  "cm-core",
  "serde",
+ "serde_json",
+ "thiserror",
  "toml",
 ]
 
@@ -381,6 +389,7 @@ version = "0.1.0"
 dependencies = [
  "cm-core",
  "serde",
+ "thiserror",
 ]
 
 [[package]]

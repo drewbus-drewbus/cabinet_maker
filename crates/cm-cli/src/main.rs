@@ -1,3 +1,5 @@
+mod bom;
+
 use std::fs;
 use std::path::PathBuf;
 
@@ -5,7 +7,12 @@ use clap::{Parser, Subcommand};
 
 use cm_cabinet::project::{Project, TaggedPart};
 use cm_cabinet::part::PartOperation;
-use cm_cam::ops::{generate_profile_cut, generate_dado_toolpath, generate_rabbet_toolpath, generate_drill, CamConfig, RabbetEdge};
+use cm_cam::ops::{
+    generate_profile_cut, generate_dado_toolpath, generate_rabbet_toolpath, generate_drill,
+    generate_dovetail_toolpath, generate_box_joint_toolpath, generate_mortise_toolpath,
+    generate_tenon_toolpath, generate_dowel_holes,
+    CamConfig, RabbetEdge, DovetailEdge,
+};
 use cm_cam::{Toolpath, arc_fit, optimize_rapid_order, apply_corner_fillets, FilletStyle};
 use cm_core::geometry::{Point2D, Rect};
 use cm_core::tool::Tool;
@@ -50,6 +57,10 @@ struct Cli {
     /// Export JSON BOM (bill of materials)
     #[arg(long, global = true)]
     export_bom: bool,
+
+    /// Skip automatic hardware boring pattern generation
+    #[arg(long, global = true)]
+    no_hardware: bool,
 }
 
 #[derive(Subcommand)]
@@ -156,7 +167,27 @@ fn run_generate(project_file: &PathBuf, cli: &Cli) -> Result<(), Box<dyn std::er
     println!("Machine: {}", machine.machine.name);
 
     // Generate all parts (handles both legacy and multi-cabinet)
-    let tagged_parts = project.generate_all_parts();
+    let mut tagged_parts = project.generate_all_parts();
+
+    // Apply hardware boring patterns (shelf pins, hinge plates, slide holes)
+    if !cli.no_hardware {
+        let mut hw_op_count = 0;
+        for entry in &all_cabs {
+            let hw_ops = cm_hardware::generate_all_hardware_ops(entry);
+            for hw_op in hw_ops {
+                if let Some(tp) = tagged_parts.iter_mut().find(|tp|
+                    tp.cabinet_name == entry.name && tp.part.label == hw_op.target_part
+                ) {
+                    tp.part.operations.push(hw_op.operation);
+                    hw_op_count += 1;
+                }
+            }
+        }
+        if hw_op_count > 0 {
+            println!("Hardware: {} drill operations added", hw_op_count);
+        }
+    }
+
     println!("\nGenerated {} part entries:", tagged_parts.len());
     for tp in &tagged_parts {
         let prefix = if all_cabs.len() > 1 {
@@ -192,6 +223,11 @@ fn run_generate(project_file: &PathBuf, cli: &Cli) -> Result<(), Box<dyn std::er
                 PartOperation::Rabbet(r) => r.depth,
                 PartOperation::Drill(d) => d.depth,
                 PartOperation::PocketHole(_) => 0.0,
+                PartOperation::Dovetail(d) => d.depth,
+                PartOperation::BoxJoint(b) => b.depth,
+                PartOperation::Mortise(m) => m.depth,
+                PartOperation::Tenon(t) => t.shoulder_depth,
+                PartOperation::Dowel(d) => d.depth,
             }).fold(0.0f64, f64::max);
             PartInfo {
                 label: format!("{}/{}", tp.cabinet_name, tp.part.label),
@@ -387,6 +423,78 @@ fn run_generate(project_file: &PathBuf, cli: &Cli) -> Result<(), Box<dyn std::er
                                 println!("    - Pocket hole at ({:.3}\", {:.3}\") (off-CNC)", ph.x, ph.y);
                             }
                         }
+                        PartOperation::Dovetail(dt) => {
+                            let edge = match dt.edge {
+                                cm_cabinet::part::Edge::Top => DovetailEdge::Top,
+                                cm_cabinet::part::Edge::Bottom => DovetailEdge::Bottom,
+                                cm_cabinet::part::Edge::Left => DovetailEdge::Left,
+                                cm_cabinet::part::Edge::Right => DovetailEdge::Right,
+                            };
+                            let tp = generate_dovetail_toolpath(
+                                &positioned_rect, edge, dt.tail_count,
+                                dt.tail_width, dt.pin_width, dt.depth,
+                                &tool, rpm, &cam_config,
+                            );
+                            println!("    - Dovetail on {:?} edge, {} tails, depth {:.3}\"",
+                                dt.edge, dt.tail_count, dt.depth);
+                            sheet_toolpaths.push(tp);
+                        }
+                        PartOperation::BoxJoint(bj) => {
+                            let edge = match bj.edge {
+                                cm_cabinet::part::Edge::Top => DovetailEdge::Top,
+                                cm_cabinet::part::Edge::Bottom => DovetailEdge::Bottom,
+                                cm_cabinet::part::Edge::Left => DovetailEdge::Left,
+                                cm_cabinet::part::Edge::Right => DovetailEdge::Right,
+                            };
+                            let tp = generate_box_joint_toolpath(
+                                &positioned_rect, edge, bj.finger_width,
+                                bj.finger_count, bj.depth,
+                                &tool, rpm, &cam_config,
+                            );
+                            println!("    - Box joint on {:?} edge, {} fingers, depth {:.3}\"",
+                                bj.edge, bj.finger_count, bj.depth);
+                            sheet_toolpaths.push(tp);
+                        }
+                        PartOperation::Mortise(m) => {
+                            let tp = generate_mortise_toolpath(
+                                &positioned_rect, m.x, m.y,
+                                m.width, m.length, m.depth,
+                                &tool, rpm, &cam_config,
+                            );
+                            println!("    - Mortise at ({:.3}\", {:.3}\"), {:.3}\" x {:.3}\" x {:.3}\"",
+                                m.x, m.y, m.width, m.length, m.depth);
+                            sheet_toolpaths.push(tp);
+                        }
+                        PartOperation::Tenon(t) => {
+                            let edge = match t.edge {
+                                cm_cabinet::part::Edge::Top => DovetailEdge::Top,
+                                cm_cabinet::part::Edge::Bottom => DovetailEdge::Bottom,
+                                cm_cabinet::part::Edge::Left => DovetailEdge::Left,
+                                cm_cabinet::part::Edge::Right => DovetailEdge::Right,
+                            };
+                            let tp = generate_tenon_toolpath(
+                                &positioned_rect, edge, t.thickness,
+                                t.width, t.length, t.shoulder_depth,
+                                &tool, rpm, &cam_config,
+                            );
+                            println!("    - Tenon on {:?} edge, {:.3}\" x {:.3}\" x {:.3}\"",
+                                t.edge, t.thickness, t.width, t.length);
+                            sheet_toolpaths.push(tp);
+                        }
+                        PartOperation::Dowel(d) => {
+                            let hole_positions: Vec<(f64, f64)> = d.holes
+                                .iter()
+                                .map(|h| (h.x, h.y))
+                                .collect();
+                            let tp = generate_dowel_holes(
+                                &positioned_rect, &hole_positions,
+                                d.dowel_diameter, d.depth,
+                                &tool, rpm, &cam_config,
+                            );
+                            println!("    - Dowel holes: {} holes, {:.3}\" dia, depth {:.3}\"",
+                                d.holes.len(), d.dowel_diameter, d.depth);
+                            sheet_toolpaths.push(tp);
+                        }
                     }
                 }
 
@@ -449,9 +557,43 @@ fn run_generate(project_file: &PathBuf, cli: &Cli) -> Result<(), Box<dyn std::er
         if cli.export_svg {
             write_svg(&group_output_dir, &nesting_result, &nesting_config)?;
         }
-        if cli.export_bom {
-            write_bom_json(&group_output_dir, &project, &group.parts, &group.material_name, &nesting_result)?;
-        }
+    }
+
+    // Comprehensive BOM (outside the per-material loop — covers all cabinets/materials)
+    if cli.export_bom {
+        let primary_mat = project.primary_material();
+        let cost_per_sheet = primary_mat.and_then(|m| m.cost_per_unit);
+        // Sum sheets across all material groups
+        let total_sheets: u32 = groups.iter()
+            .map(|g| {
+                let config = NestingConfig {
+                    sheet_width: g.material.sheet_width.unwrap_or(48.0),
+                    sheet_length: g.material.sheet_length.unwrap_or(96.0),
+                    kerf: 0.25,
+                    edge_margin: 0.5,
+                    allow_rotation: false,
+                    guillotine_compatible: false,
+                };
+                let mut np = Vec::new();
+                for tp in &g.parts {
+                    for i in 0..tp.part.quantity {
+                        np.push(NestingPart {
+                            id: format!("{}_{}", tp.part.label, i),
+                            width: tp.part.rect.width,
+                            height: tp.part.rect.height,
+                            can_rotate: false,
+                        });
+                    }
+                }
+                nest_parts(&np, &config).sheet_count as u32
+            })
+            .sum();
+
+        let comprehensive_bom = bom::generate_bom(&project, &tagged_parts, total_sheets, cost_per_sheet);
+        let bom_json = serde_json::to_string_pretty(&comprehensive_bom)?;
+        let bom_path = cli.output_dir.join("bom.json");
+        fs::write(&bom_path, &bom_json)?;
+        println!("Comprehensive BOM written to: {}", bom_path.display());
     }
 
     println!("\nDone. {} material group(s) processed.", groups.len());
@@ -569,6 +711,7 @@ fn build_project_from_parts(
             sheet_length: Some(96.0),
             cost_per_unit: None,
             material_type: MaterialType::Plywood,
+            density_lb_per_ft3: None,
         }),
         back_material: None,
         cabinet: Some(Cabinet {
@@ -785,53 +928,3 @@ fn write_svg(
     Ok(())
 }
 
-/// Export JSON BOM (bill of materials) with material quantities and cost estimates.
-fn write_bom_json(
-    output_dir: &PathBuf,
-    project: &Project,
-    parts: &[&TaggedPart],
-    material_name: &str,
-    nesting_result: &cm_nesting::packer::NestingResult,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use serde_json::json;
-
-    let multi = project.all_cabinets().len() > 1;
-
-    let part_list: Vec<_> = parts.iter().map(|tp| {
-        let mut entry = json!({
-            "label": tp.part.label,
-            "width": tp.part.rect.width,
-            "height": tp.part.rect.height,
-            "thickness": tp.part.thickness,
-            "quantity": tp.part.quantity,
-            "operations": tp.part.operations.len(),
-            "material": &tp.material_name,
-        });
-        if multi {
-            entry["cabinet"] = json!(tp.cabinet_name);
-        }
-        entry
-    }).collect();
-
-    // Cost estimation
-    let mat = &parts.first().map(|tp| &tp.material);
-    let cost_per_sheet = mat.and_then(|m| m.cost_per_unit);
-    let total_sheets = nesting_result.sheet_count;
-    let estimated_cost = cost_per_sheet.map(|c| c * total_sheets as f64);
-
-    let bom = json!({
-        "project": project.project.name,
-        "material": material_name,
-        "sheets_required": total_sheets,
-        "utilization_percent": nesting_result.overall_utilization,
-        "estimated_cost": estimated_cost,
-        "cost_per_sheet": cost_per_sheet,
-        "parts": part_list,
-    });
-
-    let bom_path = output_dir.join("bom.json");
-    let json_str = serde_json::to_string_pretty(&bom)?;
-    fs::write(&bom_path, &json_str)?;
-    println!("BOM written to: {}", bom_path.display());
-    Ok(())
-}
