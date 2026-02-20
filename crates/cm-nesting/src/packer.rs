@@ -242,7 +242,7 @@ impl MaxRectsSheet {
         let px = pos.x;
         let py = pos.y;
 
-        let mut new_rects = Vec::new();
+        let mut new_rects = Vec::with_capacity(4);
         let mut i = 0;
         while i < self.free_rects.len() {
             let fr = &self.free_rects[i];
@@ -302,28 +302,34 @@ impl MaxRectsSheet {
 
         self.free_rects.extend(new_rects);
         self.prune_contained();
+
+        // Cap free rects at 128 to bound O(m²) pruning
+        if self.free_rects.len() > 128 {
+            self.free_rects.sort_by(|a, b| {
+                let area_a = a.width * a.height;
+                let area_b = b.width * b.height;
+                area_b.partial_cmp(&area_a).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            self.free_rects.truncate(128);
+        }
     }
 
     /// Remove free rects that are fully contained within another free rect.
     fn prune_contained(&mut self) {
-        let mut i = 0;
-        while i < self.free_rects.len() {
-            let mut contained = false;
-            for j in 0..self.free_rects.len() {
-                if i == j {
-                    continue;
-                }
+        let n = self.free_rects.len();
+        let mut keep = vec![true; n];
+        for i in 0..n {
+            if !keep[i] { continue; }
+            for j in 0..n {
+                if i == j || !keep[j] { continue; }
                 if self.is_contained(i, j) {
-                    contained = true;
+                    keep[i] = false;
                     break;
                 }
             }
-            if contained {
-                self.free_rects.swap_remove(i);
-            } else {
-                i += 1;
-            }
         }
+        let mut idx = 0;
+        self.free_rects.retain(|_| { let k = keep[idx]; idx += 1; k });
     }
 
     /// Check if free_rects[a] is fully contained within free_rects[b].
@@ -359,8 +365,8 @@ pub fn nest_parts(parts: &[NestingPart], config: &NestingConfig) -> NestingResul
         area_b.partial_cmp(&area_a).unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let mut sheets: Vec<SheetLayout> = Vec::new();
-    let mut sheet_states: Vec<MaxRectsSheet> = Vec::new();
+    let mut sheets: Vec<SheetLayout> = Vec::with_capacity((parts.len() / 4).max(1));
+    let mut sheet_states: Vec<MaxRectsSheet> = Vec::with_capacity((parts.len() / 4).max(1));
     let mut unplaced: Vec<String> = Vec::new();
 
     for part in &sorted_parts {
@@ -1312,6 +1318,76 @@ mod tests {
         }];
         let result2 = nest_parts(&parts2, &config);
         assert_eq!(result2.unplaced.len(), 1, "should not fit with large margins");
+    }
+
+    #[test]
+    fn test_free_rect_cap_stress() {
+        // 200 tiny parts — the free rect list should stay bounded at 128
+        let parts: Vec<NestingPart> = (0..200)
+            .map(|i| NestingPart {
+                id: format!("tiny_{}", i),
+                width: 1.5,
+                height: 1.5,
+                can_rotate: false,
+            })
+            .collect();
+        let config = NestingConfig {
+            sheet_width: 48.0,
+            sheet_length: 96.0,
+            kerf: 0.125,
+            edge_margin: 0.5,
+            allow_rotation: false,
+            guillotine_compatible: false,
+        };
+        let result = nest_parts(&parts, &config);
+
+        // All parts should still be placed
+        assert!(result.unplaced.is_empty(), "all 200 tiny parts should be placed");
+        assert!(result.sheet_count >= 1, "should need at least 1 sheet");
+
+        // Verify no overlaps on any sheet
+        for sheet in &result.sheets {
+            for i in 0..sheet.parts.len() {
+                for j in (i + 1)..sheet.parts.len() {
+                    assert!(
+                        !rects_overlap(&sheet.parts[i].rect, &sheet.parts[j].rect),
+                        "Parts '{}' and '{}' overlap on sheet {}",
+                        sheet.parts[i].id, sheet.parts[j].id, sheet.sheet_index,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_nesting_determinism_after_cap() {
+        // Bookshelf-like parts — cap should not change placement correctness
+        let parts = vec![
+            NestingPart { id: "left_side".into(), width: 12.0, height: 30.0, can_rotate: false },
+            NestingPart { id: "right_side".into(), width: 12.0, height: 30.0, can_rotate: false },
+            NestingPart { id: "top".into(), width: 35.25, height: 12.0, can_rotate: false },
+            NestingPart { id: "bottom".into(), width: 35.25, height: 12.0, can_rotate: false },
+            NestingPart { id: "shelf_1".into(), width: 35.25, height: 11.75, can_rotate: false },
+            NestingPart { id: "shelf_2".into(), width: 35.25, height: 11.75, can_rotate: false },
+            NestingPart { id: "back".into(), width: 35.25, height: 29.25, can_rotate: false },
+        ];
+        let config = NestingConfig::default();
+
+        // Run twice — results must be identical
+        let r1 = nest_parts(&parts, &config);
+        let r2 = nest_parts(&parts, &config);
+
+        assert_eq!(r1.sheet_count, r2.sheet_count, "sheet count should be deterministic");
+        assert_eq!(r1.unplaced, r2.unplaced, "unplaced list should be deterministic");
+
+        for (s1, s2) in r1.sheets.iter().zip(r2.sheets.iter()) {
+            assert_eq!(s1.parts.len(), s2.parts.len(), "part count per sheet should match");
+            for (p1, p2) in s1.parts.iter().zip(s2.parts.iter()) {
+                assert_eq!(p1.id, p2.id, "part IDs should match");
+                assert!((p1.rect.origin.x - p2.rect.origin.x).abs() < 1e-10, "X positions should match");
+                assert!((p1.rect.origin.y - p2.rect.origin.y).abs() < 1e-10, "Y positions should match");
+            }
+        }
     }
 
     /// Helper: check if two rectangles overlap (excluding touching edges).

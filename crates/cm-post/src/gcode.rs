@@ -98,6 +98,7 @@ impl<'a> GCodeEmitter<'a> {
             }
 
             // Emit each segment
+            let mut line = String::with_capacity(80);
             for seg in &tp.segments {
                 match seg.motion {
                     Motion::Rapid => {
@@ -108,7 +109,7 @@ impl<'a> GCodeEmitter<'a> {
                         }
 
                         // G00 - modal, only emit if changed
-                        let mut line = String::new();
+                        line.clear();
                         if last_motion != Some(Motion::Rapid) {
                             write!(line, "G00 ").unwrap();
                         }
@@ -136,7 +137,7 @@ impl<'a> GCodeEmitter<'a> {
                             tp.feed_rate
                         };
 
-                        let mut line = String::new();
+                        line.clear();
                         if last_motion.is_none() || !matches!(last_motion, Some(Motion::Linear)) {
                             write!(line, "G01 ").unwrap();
                         }
@@ -162,7 +163,7 @@ impl<'a> GCodeEmitter<'a> {
                             in_canned_cycle = false;
                         }
 
-                        let mut line = String::new();
+                        line.clear();
                         write!(
                             line,
                             "G02 X{:.*} Y{:.*} Z{:.*} I{:.*} J{:.*}",
@@ -186,7 +187,7 @@ impl<'a> GCodeEmitter<'a> {
                             in_canned_cycle = false;
                         }
 
-                        let mut line = String::new();
+                        line.clear();
                         write!(
                             line,
                             "G03 X{:.*} Y{:.*} Z{:.*} I{:.*} J{:.*}",

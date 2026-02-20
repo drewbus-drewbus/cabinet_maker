@@ -1,5 +1,6 @@
 mod bom;
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -172,13 +173,17 @@ fn run_generate(project_file: &PathBuf, cli: &Cli) -> Result<(), Box<dyn std::er
     // Apply hardware boring patterns (shelf pins, hinge plates, slide holes)
     if !cli.no_hardware {
         let mut hw_op_count = 0;
+        // Build index for O(1) lookup instead of O(n) linear find per hardware op
+        let part_index: HashMap<(String, String), usize> = tagged_parts
+            .iter()
+            .enumerate()
+            .map(|(i, tp)| ((tp.cabinet_name.clone(), tp.part.label.clone()), i))
+            .collect();
         for entry in &all_cabs {
             let hw_ops = cm_hardware::generate_all_hardware_ops(entry);
             for hw_op in hw_ops {
-                if let Some(tp) = tagged_parts.iter_mut().find(|tp|
-                    tp.cabinet_name == entry.name && tp.part.label == hw_op.target_part
-                ) {
-                    tp.part.operations.push(hw_op.operation);
+                if let Some(&idx) = part_index.get(&(entry.name.clone(), hw_op.target_part.clone())) {
+                    tagged_parts[idx].part.operations.push(hw_op.operation);
                     hw_op_count += 1;
                 }
             }
@@ -279,6 +284,7 @@ fn run_generate(project_file: &PathBuf, cli: &Cli) -> Result<(), Box<dyn std::er
 
     let emitter = GCodeEmitter::new(&machine, project.project.units);
     let multi_material = groups.len() > 1;
+    let mut total_sheets_all: u32 = 0;
 
     for group in &groups {
         let mat = &group.material;
@@ -327,6 +333,7 @@ fn run_generate(project_file: &PathBuf, cli: &Cli) -> Result<(), Box<dyn std::er
         }
 
         let nesting_result = nest_parts(&nesting_parts, &nesting_config);
+        total_sheets_all += nesting_result.sheet_count as u32;
 
         println!("Nesting result:");
         println!("  Sheets required: {}", nesting_result.sheet_count);
@@ -563,33 +570,8 @@ fn run_generate(project_file: &PathBuf, cli: &Cli) -> Result<(), Box<dyn std::er
     if cli.export_bom {
         let primary_mat = project.primary_material();
         let cost_per_sheet = primary_mat.and_then(|m| m.cost_per_unit);
-        // Sum sheets across all material groups
-        let total_sheets: u32 = groups.iter()
-            .map(|g| {
-                let config = NestingConfig {
-                    sheet_width: g.material.sheet_width.unwrap_or(48.0),
-                    sheet_length: g.material.sheet_length.unwrap_or(96.0),
-                    kerf: 0.25,
-                    edge_margin: 0.5,
-                    allow_rotation: false,
-                    guillotine_compatible: false,
-                };
-                let mut np = Vec::new();
-                for tp in &g.parts {
-                    for i in 0..tp.part.quantity {
-                        np.push(NestingPart {
-                            id: format!("{}_{}", tp.part.label, i),
-                            width: tp.part.rect.width,
-                            height: tp.part.rect.height,
-                            can_rotate: false,
-                        });
-                    }
-                }
-                nest_parts(&np, &config).sheet_count as u32
-            })
-            .sum();
-
-        let comprehensive_bom = bom::generate_bom(&project, &tagged_parts, total_sheets, cost_per_sheet);
+        // Reuse sheet count accumulated during the per-material nesting loop above
+        let comprehensive_bom = bom::generate_bom(&project, &tagged_parts, total_sheets_all, cost_per_sheet);
         let bom_json = serde_json::to_string_pretty(&comprehensive_bom)?;
         let bom_path = cli.output_dir.join("bom.json");
         fs::write(&bom_path, &bom_json)?;

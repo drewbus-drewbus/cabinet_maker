@@ -191,33 +191,34 @@ pub fn generate_bom(
         }
     }
 
-    // Totals
-    let total_sheet_parts: u32 = cabinet_boms.iter()
-        .flat_map(|cb| cb.sheet_parts.iter())
-        .map(|p| p.quantity)
-        .sum();
-    let total_hardware_items: u32 = cabinet_boms.iter()
-        .flat_map(|cb| cb.hardware.iter())
-        .map(|h| h.quantity)
-        .sum();
-    let total_edge_banding_lf: f64 = cabinet_boms.iter()
-        .flat_map(|cb| cb.edge_banding.iter())
-        .map(|e| e.linear_feet)
-        .sum();
-    let total_weight_lb: f64 = cabinet_boms.iter()
-        .map(|cb| cb.weight_lb)
-        .sum();
+    // Totals — single-pass fold over cabinet_boms
+    struct Accum {
+        sheet_parts: u32,
+        hardware_items: u32,
+        edge_banding_lf: f64,
+        weight_lb: f64,
+    }
+    let acc = cabinet_boms.iter().fold(
+        Accum { sheet_parts: 0, hardware_items: 0, edge_banding_lf: 0.0, weight_lb: 0.0 },
+        |mut a, cb| {
+            a.sheet_parts += cb.sheet_parts.iter().map(|p| p.quantity).sum::<u32>();
+            a.hardware_items += cb.hardware.iter().map(|h| h.quantity).sum::<u32>();
+            a.edge_banding_lf += cb.edge_banding.iter().map(|e| e.linear_feet).sum::<f64>();
+            a.weight_lb += cb.weight_lb;
+            a
+        },
+    );
     let total_cost = sum_optional(cabinet_boms.iter().map(|cb| cb.cost.total));
 
     Bom {
         project_name: project.project.name.clone(),
         cabinets: cabinet_boms,
         totals: BomTotals {
-            total_sheet_parts,
+            total_sheet_parts: acc.sheet_parts,
             total_sheets_required: total_sheets,
-            total_hardware_items,
-            total_edge_banding_lf,
-            total_weight_lb,
+            total_hardware_items: acc.hardware_items,
+            total_edge_banding_lf: acc.edge_banding_lf,
+            total_weight_lb: acc.weight_lb,
             total_cost,
         },
     }
@@ -645,6 +646,36 @@ material_ref = "3/4\" Plywood"
             assert!(!entry.description.is_empty(), "hardware description should not be empty");
             assert!(entry.quantity > 0, "hardware quantity should be positive");
         }
+    }
+
+    #[test]
+    fn test_bom_single_pass_totals_match() {
+        // Verify the single-pass fold produces identical results to manual computation
+        let project = test_project();
+        let tagged_parts = project.generate_all_parts();
+        let bom = generate_bom(&project, &tagged_parts, 2, Some(45.00));
+
+        // Manually compute expected totals the old way (multi-pass)
+        let expected_parts: u32 = bom.cabinets.iter()
+            .flat_map(|cb| cb.sheet_parts.iter())
+            .map(|p| p.quantity)
+            .sum();
+        let expected_hw: u32 = bom.cabinets.iter()
+            .flat_map(|cb| cb.hardware.iter())
+            .map(|h| h.quantity)
+            .sum();
+        let expected_eb: f64 = bom.cabinets.iter()
+            .flat_map(|cb| cb.edge_banding.iter())
+            .map(|e| e.linear_feet)
+            .sum();
+        let expected_weight: f64 = bom.cabinets.iter()
+            .map(|cb| cb.weight_lb)
+            .sum();
+
+        assert_eq!(bom.totals.total_sheet_parts, expected_parts);
+        assert_eq!(bom.totals.total_hardware_items, expected_hw);
+        assert!((bom.totals.total_edge_banding_lf - expected_eb).abs() < 1e-10);
+        assert!((bom.totals.total_weight_lb - expected_weight).abs() < 1e-10);
     }
 
     #[test]

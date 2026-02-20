@@ -72,11 +72,11 @@ pub fn generate_profile_cut(
         part_rect.height + 2.0 * r,
     );
 
-    let mut segments = Vec::new();
-
     // Calculate depth passes
     let total_depth = material_thickness;
     let num_passes = (total_depth / config.depth_per_pass).ceil() as u32;
+
+    let mut segments = Vec::with_capacity(num_passes as usize * 8 + 20);
 
     // Tab Z: leave tab_height of material on the final pass
     let tab_z = -total_depth + config.tab_height;
@@ -330,8 +330,9 @@ pub fn generate_dado_toolpath(
     let plunge_rate = feed_rate * 0.5;
     let r = tool.radius();
 
-    let mut segments = Vec::new();
     let num_passes = (dado_depth / config.depth_per_pass).ceil() as u32;
+    let num_width_passes_est = (dado_width / tool.diameter).ceil() as usize;
+    let mut segments = Vec::with_capacity(num_passes as usize * num_width_passes_est * 4 + 4);
 
     if horizontal {
         // Dado runs along X (full width of the part).
@@ -481,12 +482,12 @@ pub fn generate_rabbet_toolpath(
     let plunge_rate = feed_rate * 0.5;
     let r = tool.radius();
 
-    let mut segments = Vec::new();
     let num_passes = (rabbet_depth / config.depth_per_pass).ceil() as u32;
 
     // A rabbet is essentially a pocket along one edge. We cut parallel passes
     // stepping from the edge inward, covering the rabbet width.
     let num_width_passes = ((rabbet_width - tool.diameter) / tool.diameter).ceil() as u32 + 1;
+    let mut segments = Vec::with_capacity(num_passes as usize * num_width_passes as usize * 4 + 4);
     let step_over = if num_width_passes > 1 {
         (rabbet_width - tool.diameter) / (num_width_passes - 1) as f64
     } else {
@@ -629,7 +630,7 @@ pub fn generate_drill_pattern(
     let plunge_rate = feed_rate * 0.3; // slower plunge for drilling
     let peck_depth = tool.diameter * 2.0; // peck every 2x diameter
 
-    let mut segments = Vec::new();
+    let mut segments = Vec::with_capacity(holes.len() * 6);
 
     if let Some(first) = holes.first() {
         // Rapid to first hole
@@ -860,8 +861,8 @@ pub fn generate_dovetail_toolpath(
     let plunge_rate = feed_rate * 0.5;
     let r = tool.radius();
 
-    let mut segments = Vec::new();
     let num_passes = (depth / config.depth_per_pass).ceil() as u32;
+    let mut segments = Vec::with_capacity(tail_count as usize * num_passes as usize * 10 + 4);
 
     // Calculate tail positions along the edge
     let edge_length = match edge {
@@ -1018,8 +1019,8 @@ pub fn generate_box_joint_toolpath(
     let plunge_rate = feed_rate * 0.5;
     let r = tool.radius();
 
-    let mut segments = Vec::new();
     let num_passes = (depth / config.depth_per_pass).ceil() as u32;
+    let mut segments = Vec::with_capacity(finger_count as usize * num_passes as usize * 6 + 4);
 
     segments.push(ToolpathSegment {
         motion: Motion::Rapid,
@@ -1142,8 +1143,8 @@ pub fn generate_mortise_toolpath(
     let plunge_rate = feed_rate * 0.5;
     let r = tool.radius();
 
-    let mut segments = Vec::new();
     let num_passes = (mortise_depth / config.depth_per_pass).ceil() as u32;
+    let mut segments = Vec::with_capacity(num_passes as usize * 8 + 4);
 
     // Mortise center in part coordinates, translated to sheet coordinates
     let cx = part_rect.min_x() + mortise_x;
@@ -1255,8 +1256,8 @@ pub fn generate_tenon_toolpath(
     let plunge_rate = feed_rate * 0.5;
     let r = tool.radius();
 
-    let mut segments = Vec::new();
     let num_passes = (shoulder_depth / config.depth_per_pass).ceil() as u32;
+    let mut segments = Vec::with_capacity(num_passes as usize * 16 + 4);
 
     // The tenon is formed by removing shoulder material on the face.
     // We cut two channels (top shoulder and bottom shoulder) to form

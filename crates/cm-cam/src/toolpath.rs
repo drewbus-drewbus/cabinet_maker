@@ -2,7 +2,7 @@ use cm_core::geometry::Point2D;
 use serde::{Deserialize, Serialize};
 
 /// A complete toolpath for one operation on one part.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Toolpath {
     /// Tool number to use (references the tool library).
     pub tool_number: u32,
@@ -21,7 +21,7 @@ pub struct Toolpath {
 }
 
 /// A single segment of a toolpath.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ToolpathSegment {
     pub motion: Motion,
     pub endpoint: Point2D,
@@ -234,38 +234,51 @@ pub fn optimize_rapid_order(toolpaths: &mut Vec<Toolpath>) {
         groups.push((tp.tool_number, vec![i]));
     }
 
-    let mut reordered: Vec<Toolpath> = Vec::with_capacity(toolpaths.len());
+    // Pre-cache start/end points to avoid repeated segment lookups
+    let start_points: Vec<Option<Point2D>> = toolpaths
+        .iter()
+        .map(|tp| tp.segments.first().map(|s| s.endpoint))
+        .collect();
+    let end_points: Vec<Option<Point2D>> = toolpaths
+        .iter()
+        .map(|tp| tp.segments.last().map(|s| s.endpoint))
+        .collect();
+
+    let mut order: Vec<usize> = Vec::with_capacity(toolpaths.len());
     let mut current_pos = Point2D::origin();
 
     for (_tool, indices) in &groups {
         let mut remaining: Vec<usize> = indices.clone();
         while !remaining.is_empty() {
             // Find the toolpath with start point closest to current_pos
-            let mut best_idx = 0;
+            let mut best_ri = 0;
             let mut best_dist = f64::MAX;
             for (ri, &tp_idx) in remaining.iter().enumerate() {
-                let tp = &toolpaths[tp_idx];
-                if let Some(first) = tp.segments.first() {
-                    let dx = first.endpoint.x - current_pos.x;
-                    let dy = first.endpoint.y - current_pos.y;
+                if let Some(pt) = start_points[tp_idx] {
+                    let dx = pt.x - current_pos.x;
+                    let dy = pt.y - current_pos.y;
                     let dist = dx * dx + dy * dy;
                     if dist < best_dist {
                         best_dist = dist;
-                        best_idx = ri;
+                        best_ri = ri;
                     }
                 }
             }
 
-            let tp_idx = remaining.remove(best_idx);
-            let tp = &toolpaths[tp_idx];
-            if let Some(last) = tp.segments.last() {
-                current_pos = last.endpoint;
+            let tp_idx = remaining.swap_remove(best_ri);
+            if let Some(pt) = end_points[tp_idx] {
+                current_pos = pt;
             }
-            reordered.push(tp.clone());
+            order.push(tp_idx);
         }
     }
 
-    *toolpaths = reordered;
+    // Move toolpaths into new order without cloning
+    let mut slots = std::mem::take(toolpaths);
+    *toolpaths = order
+        .into_iter()
+        .map(|idx| std::mem::take(&mut slots[idx]))
+        .collect();
 }
 
 /// Apply dog-bone or T-bone corner fillets to internal 90-degree corners.
@@ -677,6 +690,78 @@ mod tests {
         assert!((tps[0].segments[0].endpoint.x - 1.0).abs() < 0.01, "first should be nearest to origin");
         assert!((tps[1].segments[0].endpoint.x - 5.0).abs() < 0.01, "second should be at (5,5)");
         assert!((tps[2].segments[0].endpoint.x - 10.0).abs() < 0.01, "third should be at (10,10)");
+    }
+
+    #[test]
+    fn test_optimize_rapid_order_preserves_all_toolpaths() {
+        // Verify no data loss from mem::take reordering
+        let tps_data: Vec<(f64, f64, usize)> = vec![
+            (20.0, 20.0, 3),
+            (1.0, 1.0, 5),
+            (10.0, 10.0, 2),
+            (5.0, 5.0, 4),
+        ];
+
+        let mut tps: Vec<Toolpath> = tps_data.iter().map(|(x, y, seg_count)| {
+            let mut segs = vec![
+                ToolpathSegment { motion: Motion::Rapid, endpoint: Point2D::new(*x, *y), z: 1.0 },
+            ];
+            for i in 1..*seg_count {
+                segs.push(ToolpathSegment {
+                    motion: Motion::Linear,
+                    endpoint: Point2D::new(*x + i as f64, *y),
+                    z: -0.5,
+                });
+            }
+            Toolpath { tool_number: 1, rpm: 5000.0, feed_rate: 100.0, plunge_rate: 50.0, segments: segs }
+        }).collect();
+
+        let original_count = tps.len();
+        let original_total_segments: usize = tps.iter().map(|t| t.segments.len()).sum();
+
+        optimize_rapid_order(&mut tps);
+
+        // Same number of toolpaths
+        assert_eq!(tps.len(), original_count, "should preserve toolpath count");
+
+        // Same total segments (no data loss)
+        let reordered_total_segments: usize = tps.iter().map(|t| t.segments.len()).sum();
+        assert_eq!(reordered_total_segments, original_total_segments, "should preserve total segment count");
+
+        // No empty toolpaths from mem::take
+        for (i, tp) in tps.iter().enumerate() {
+            assert!(!tp.segments.is_empty(), "toolpath {} should not be empty after reorder", i);
+        }
+    }
+
+    #[test]
+    fn test_optimize_rapid_order_swap_remove_nearest_neighbor() {
+        // Verify ordering still minimizes travel with swap_remove
+        let make_tp = |x: f64, y: f64| Toolpath {
+            tool_number: 1, rpm: 5000.0, feed_rate: 100.0, plunge_rate: 50.0,
+            segments: vec![
+                ToolpathSegment { motion: Motion::Rapid, endpoint: Point2D::new(x, y), z: 1.0 },
+                ToolpathSegment { motion: Motion::Linear, endpoint: Point2D::new(x + 1.0, y), z: -0.5 },
+            ],
+        };
+
+        let mut tps = vec![
+            make_tp(50.0, 50.0),
+            make_tp(2.0, 2.0),
+            make_tp(30.0, 30.0),
+            make_tp(8.0, 8.0),
+            make_tp(15.0, 15.0),
+        ];
+
+        optimize_rapid_order(&mut tps);
+
+        // From (0,0): nearest = (2,2), then (8,8), (15,15), (30,30), (50,50)
+        let xs: Vec<f64> = tps.iter().map(|t| t.segments[0].endpoint.x).collect();
+        assert!((xs[0] - 2.0).abs() < 0.01, "first should be nearest to origin, got {}", xs[0]);
+        // Each successive should be farther from origin (greedy nearest neighbor)
+        for w in xs.windows(2) {
+            assert!(w[0] <= w[1] + 1.0, "should generally proceed outward: {} -> {}", w[0], w[1]);
+        }
     }
 
     #[test]
