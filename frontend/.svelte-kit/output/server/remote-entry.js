@@ -1,7 +1,7 @@
 import { get_request_store, with_request_store } from "@sveltejs/kit/internal/server";
 import { parse } from "devalue";
 import { error, json } from "@sveltejs/kit";
-import { u as stringify_remote_arg, v as flatten_issues, w as create_field_proxy, x as normalize_issue, y as set_nested_value, z as deep_set, k as stringify, f as create_remote_key, h as handle_error_and_jsonify } from "./chunks/shared.js";
+import { u as stringify_remote_arg, M as MUTATIVE_METHODS, v as create_field_proxy, w as normalize_issue, x as set_nested_value, y as flatten_issues, z as deep_set, k as stringify, f as create_remote_key, h as handle_error_and_jsonify } from "./chunks/shared.js";
 import { ValidationError, HttpError, SvelteKitError } from "@sveltejs/kit/internal";
 import { B as BROWSER } from "./chunks/false.js";
 import { b as base, c as app_dir, p as prerendering } from "./chunks/environment.js";
@@ -100,15 +100,10 @@ function command(validate_or_fn, maybe_fn) {
   const __ = { type: "command", id: "", name: "" };
   const wrapper = (arg) => {
     const { event, state } = get_request_store();
-    if (state.is_endpoint_request) {
-      if (!["POST", "PUT", "PATCH", "DELETE"].includes(event.request.method)) {
-        throw new Error(
-          `Cannot call a command (\`${__.name}(${maybe_fn ? "..." : ""})\`) from a ${event.request.method} handler`
-        );
-      }
-    } else if (!event.isRemoteRequest) {
+    if (!state.allows_commands) {
+      const disallowed_method = !MUTATIVE_METHODS.includes(event.request.method);
       throw new Error(
-        `Cannot call a command (\`${__.name}(${maybe_fn ? "..." : ""})\`) during server-side rendering`
+        `Cannot call a command (\`${__.name}(${maybe_fn ? "..." : ""})\`) ${disallowed_method ? `from a ${event.request.method} handler or ` : ""}during server-side rendering`
       );
     }
     state.refreshes ??= {};
@@ -193,19 +188,24 @@ function form(validate_or_fn, maybe_fn) {
     });
     Object.defineProperty(instance, "fields", {
       get() {
-        const data = get_cache(__)?.[""];
-        const issues = flatten_issues(data?.issues ?? []);
         return create_field_proxy(
           {},
-          () => data?.input ?? {},
+          () => get_cache(__)?.[""]?.input ?? {},
           (path, value) => {
+            const cache = get_cache(__);
+            const data = cache[""];
             if (data?.submission) {
               return;
             }
-            const input = path.length === 0 ? value : deep_set(data?.input ?? {}, path.map(String), value);
-            (get_cache(__)[""] ??= {}).input = input;
+            if (path.length === 0) {
+              (cache[""] ??= {}).input = value;
+              return;
+            }
+            const input = data?.input ?? {};
+            deep_set(input, path.map(String), value);
+            (cache[""] ??= {}).input = input;
           },
-          () => issues
+          () => flatten_issues(get_cache(__)?.[""]?.issues ?? [])
         );
       }
     });

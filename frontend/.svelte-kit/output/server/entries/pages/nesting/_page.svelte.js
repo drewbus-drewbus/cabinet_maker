@@ -1,5 +1,5 @@
-import { s as store_get, b as ensure_array_like, a as attr_class, e as escape_html, u as unsubscribe_stores } from "../../../chunks/index2.js";
-import { n as nestingResults, p as project } from "../../../chunks/project.js";
+import { s as store_get, b as ensure_array_like, a as attr_class, e as escape_html, u as unsubscribe_stores, d as derived } from "../../../chunks/index2.js";
+import { p as project, n as nestingResults } from "../../../chunks/project.js";
 import { b as selectedMaterialIndex, c as selectedSheetIndex } from "../../../chunks/ui.js";
 function html(value) {
   var html2 = String(value);
@@ -10,8 +10,8 @@ function _page($$renderer, $$props) {
   $$renderer.component(($$renderer2) => {
     var $$store_subs;
     let svgContent = "";
-    const currentGroup = store_get($$store_subs ??= {}, "$nestingResults", nestingResults)[store_get($$store_subs ??= {}, "$selectedMaterialIndex", selectedMaterialIndex)];
-    const currentResult = currentGroup?.nesting_result;
+    const currentGroup = derived(() => store_get($$store_subs ??= {}, "$nestingResults", nestingResults)[store_get($$store_subs ??= {}, "$selectedMaterialIndex", selectedMaterialIndex)]);
+    const currentResult = derived(() => currentGroup()?.nesting_result);
     if (store_get($$store_subs ??= {}, "$project", project)) {
       $$renderer2.push("<!--[-->");
       $$renderer2.push(`<div><div class="flex items-center justify-between mb-4"><h1 class="text-2xl font-bold">Nesting</h1> <button class="px-4 py-2 text-sm bg-accent hover:bg-accent/80 text-white rounded">Nest All Parts</button></div> `);
@@ -29,10 +29,10 @@ function _page($$renderer, $$props) {
           })}>${escape_html(group.material_name)} (${escape_html(group.thickness)}")</button>`);
         }
         $$renderer2.push(`<!--]--></div> `);
-        if (currentResult) {
+        if (currentResult()) {
           $$renderer2.push("<!--[-->");
           $$renderer2.push(`<div class="flex items-center gap-4 mb-4"><div class="flex gap-1"><!--[-->`);
-          const each_array_1 = ensure_array_like(currentResult.sheets);
+          const each_array_1 = ensure_array_like(currentResult().sheets);
           for (let i = 0, $$length = each_array_1.length; i < $$length; i++) {
             each_array_1[i];
             $$renderer2.push(`<button${attr_class("px-2 py-1 text-xs rounded", void 0, {
@@ -40,17 +40,17 @@ function _page($$renderer, $$props) {
               "bg-surface": store_get($$store_subs ??= {}, "$selectedSheetIndex", selectedSheetIndex) !== i
             })}>Sheet ${escape_html(i + 1)}</button>`);
           }
-          $$renderer2.push(`<!--]--></div> <div class="text-xs text-text-secondary">${escape_html(currentResult.sheet_count)} sheet(s) | ${escape_html(currentResult.overall_utilization.toFixed(1))}% utilization `);
-          if (currentResult.unplaced.length > 0) {
+          $$renderer2.push(`<!--]--></div> <div class="text-xs text-text-secondary">${escape_html(currentResult().sheet_count)} sheet(s) | ${escape_html(currentResult().overall_utilization.toFixed(1))}% utilization `);
+          if (currentResult().unplaced.length > 0) {
             $$renderer2.push("<!--[-->");
-            $$renderer2.push(`| <span class="text-error">${escape_html(currentResult.unplaced.length)} unplaced</span>`);
+            $$renderer2.push(`| <span class="text-error">${escape_html(currentResult().unplaced.length)} unplaced</span>`);
           } else {
             $$renderer2.push("<!--[!-->");
           }
           $$renderer2.push(`<!--]--></div></div> `);
-          if (currentResult.sheets[store_get($$store_subs ??= {}, "$selectedSheetIndex", selectedSheetIndex)]) {
+          if (currentResult().sheets[store_get($$store_subs ??= {}, "$selectedSheetIndex", selectedSheetIndex)]) {
             $$renderer2.push("<!--[-->");
-            const sheet = currentResult.sheets[store_get($$store_subs ??= {}, "$selectedSheetIndex", selectedSheetIndex)];
+            const sheet = currentResult().sheets[store_get($$store_subs ??= {}, "$selectedSheetIndex", selectedSheetIndex)];
             $$renderer2.push(`<div class="flex gap-4 mb-4 text-xs text-text-secondary"><span>Parts: ${escape_html(sheet.parts.length)}</span> <span>Utilization: ${escape_html(sheet.utilization.toFixed(1))}%</span> <span>Waste: ${escape_html(sheet.waste_area.toFixed(1))} sq in</span></div>`);
           } else {
             $$renderer2.push("<!--[!-->");

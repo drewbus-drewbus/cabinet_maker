@@ -57,8 +57,8 @@
 
 	const sortedRows = $derived(
 		[...$cutlistRows].sort((a, b) => {
-			const av = (a as Record<string, unknown>)[sortColumn];
-			const bv = (b as Record<string, unknown>)[sortColumn];
+			const av = (a as unknown as Record<string, unknown>)[sortColumn];
+			const bv = (b as unknown as Record<string, unknown>)[sortColumn];
 			const cmp = typeof av === 'string' ? (av as string).localeCompare(bv as string) : (av as number) - (bv as number);
 			return sortAsc ? cmp : -cmp;
 		})

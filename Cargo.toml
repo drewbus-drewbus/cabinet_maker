@@ -37,5 +37,5 @@ cm-joinery = { path = "crates/cm-joinery" }
 cm-hardware = { path = "crates/cm-hardware" }
 cm-pipeline = { path = "crates/cm-pipeline" }
 serde = { version = "1", features = ["derive"] }
-toml = "0.8"
+toml = "1"
 thiserror = "2"

@@ -1,4 +1,4 @@
-import { s as store_get, b as ensure_array_like, a as attr_class, e as escape_html, c as attr, u as unsubscribe_stores } from "../../../chunks/index2.js";
+import { s as store_get, b as ensure_array_like, a as attr_class, e as escape_html, c as attr, u as unsubscribe_stores, d as derived } from "../../../chunks/index2.js";
 import { p as project, i as isDirty, s as showToast } from "../../../chunks/project.js";
 import { a as selectedCabinetIndex } from "../../../chunks/ui.js";
 import { p as pushSnapshot } from "../../../chunks/history.js";
@@ -43,10 +43,10 @@ function _page($$renderer, $$props) {
       if (idx === null || !p || idx >= p.cabinets.length) return null;
       return p.cabinets[idx];
     }
-    const selectedCab = getSelectedCabinet();
-    const showToeKick = selectedCab?.cabinet_type === "base_cabinet" || selectedCab?.cabinet_type === "tall_cabinet" || selectedCab?.cabinet_type === "drawer_bank";
-    const showDrawers = selectedCab?.cabinet_type === "drawer_bank";
-    const showStretchers = selectedCab?.cabinet_type === "sink_base";
+    const selectedCab = derived(getSelectedCabinet);
+    const showToeKick = derived(() => selectedCab()?.cabinet_type === "base_cabinet" || selectedCab()?.cabinet_type === "tall_cabinet" || selectedCab()?.cabinet_type === "drawer_bank");
+    const showDrawers = derived(() => selectedCab()?.cabinet_type === "drawer_bank");
+    const showStretchers = derived(() => selectedCab()?.cabinet_type === "sink_base");
     if (store_get($$store_subs ??= {}, "$project", project)) {
       $$renderer2.push("<!--[-->");
       $$renderer2.push(`<div class="flex gap-6 h-full"><div class="w-56 flex-shrink-0"><div class="flex items-center justify-between mb-3"><h2 class="text-lg font-semibold">Cabinets</h2> <button class="px-2 py-1 text-xs bg-accent hover:bg-accent/80 text-white rounded">+ Add</button></div> <div class="space-y-1"><!--[-->`);
@@ -67,12 +67,12 @@ function _page($$renderer, $$props) {
         $$renderer2.push("<!--[!-->");
       }
       $$renderer2.push(`<!--]--></div> <div class="flex-1 overflow-auto">`);
-      if (selectedCab) {
+      if (selectedCab()) {
         $$renderer2.push("<!--[-->");
-        $$renderer2.push(`<h2 class="text-lg font-semibold mb-4">Edit: ${escape_html(selectedCab.name)}</h2> <div class="grid grid-cols-2 gap-4 max-w-lg"><div class="col-span-2"><label class="block text-xs text-text-secondary mb-1">Name</label> <input type="text"${attr("value", selectedCab.name)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div class="col-span-2"><label class="block text-xs text-text-secondary mb-1">Type</label> `);
+        $$renderer2.push(`<h2 class="text-lg font-semibold mb-4">Edit: ${escape_html(selectedCab().name)}</h2> <div class="grid grid-cols-2 gap-4 max-w-lg"><div class="col-span-2"><label class="block text-xs text-text-secondary mb-1">Name</label> <input type="text"${attr("value", selectedCab().name)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div class="col-span-2"><label class="block text-xs text-text-secondary mb-1">Type</label> `);
         $$renderer2.select(
           {
-            value: selectedCab.cabinet_type,
+            value: selectedCab().cabinet_type,
             onchange: (e) => {
               updateField("cabinet_type", e.target.value);
               handleUpdateCabinet();
@@ -91,24 +91,24 @@ function _page($$renderer, $$props) {
             $$renderer3.push(`<!--]-->`);
           }
         );
-        $$renderer2.push(`</div> <div><label class="block text-xs text-text-secondary mb-1">Width</label> <input type="number" step="0.25"${attr("value", selectedCab.width)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="block text-xs text-text-secondary mb-1">Height</label> <input type="number" step="0.25"${attr("value", selectedCab.height)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="block text-xs text-text-secondary mb-1">Depth</label> <input type="number" step="0.25"${attr("value", selectedCab.depth)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="block text-xs text-text-secondary mb-1">Shelves</label> <input type="number" min="0" max="20"${attr("value", selectedCab.shelf_count)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="block text-xs text-text-secondary mb-1">Material Thickness</label> <input type="number" step="0.125"${attr("value", selectedCab.material_thickness)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="block text-xs text-text-secondary mb-1">Back Thickness</label> <input type="number" step="0.125"${attr("value", selectedCab.back_thickness)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="flex items-center gap-2 text-xs text-text-secondary cursor-pointer"><input type="checkbox"${attr("checked", selectedCab.has_back, true)} class="accent-accent"/> Has Back Panel</label></div> `);
-        if (showToeKick) {
+        $$renderer2.push(`</div> <div><label class="block text-xs text-text-secondary mb-1">Width</label> <input type="number" step="0.25"${attr("value", selectedCab().width)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="block text-xs text-text-secondary mb-1">Height</label> <input type="number" step="0.25"${attr("value", selectedCab().height)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="block text-xs text-text-secondary mb-1">Depth</label> <input type="number" step="0.25"${attr("value", selectedCab().depth)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="block text-xs text-text-secondary mb-1">Shelves</label> <input type="number" min="0" max="20"${attr("value", selectedCab().shelf_count)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="block text-xs text-text-secondary mb-1">Material Thickness</label> <input type="number" step="0.125"${attr("value", selectedCab().material_thickness)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="block text-xs text-text-secondary mb-1">Back Thickness</label> <input type="number" step="0.125"${attr("value", selectedCab().back_thickness)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="flex items-center gap-2 text-xs text-text-secondary cursor-pointer"><input type="checkbox"${attr("checked", selectedCab().has_back, true)} class="accent-accent"/> Has Back Panel</label></div> `);
+        if (showToeKick()) {
           $$renderer2.push("<!--[-->");
-          $$renderer2.push(`<div class="col-span-2 border-t border-border pt-3 mt-2"><h3 class="text-sm font-semibold mb-2">Toe Kick</h3> <div class="grid grid-cols-2 gap-3"><div><label class="block text-xs text-text-secondary mb-1">Height</label> <input type="number" step="0.25"${attr("value", selectedCab.toe_kick?.height ?? 4)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="block text-xs text-text-secondary mb-1">Setback</label> <input type="number" step="0.25"${attr("value", selectedCab.toe_kick?.setback ?? 3)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div></div></div>`);
+          $$renderer2.push(`<div class="col-span-2 border-t border-border pt-3 mt-2"><h3 class="text-sm font-semibold mb-2">Toe Kick</h3> <div class="grid grid-cols-2 gap-3"><div><label class="block text-xs text-text-secondary mb-1">Height</label> <input type="number" step="0.25"${attr("value", selectedCab().toe_kick?.height ?? 4)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="block text-xs text-text-secondary mb-1">Setback</label> <input type="number" step="0.25"${attr("value", selectedCab().toe_kick?.setback ?? 3)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div></div></div>`);
         } else {
           $$renderer2.push("<!--[!-->");
         }
         $$renderer2.push(`<!--]--> `);
-        if (showDrawers) {
+        if (showDrawers()) {
           $$renderer2.push("<!--[-->");
-          $$renderer2.push(`<div class="col-span-2 border-t border-border pt-3 mt-2"><h3 class="text-sm font-semibold mb-2">Drawers</h3> <div class="grid grid-cols-2 gap-3"><div><label class="block text-xs text-text-secondary mb-1">Count</label> <input type="number" min="1" max="10"${attr("value", selectedCab.drawers?.count ?? 4)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="block text-xs text-text-secondary mb-1">Slide Clearance</label> <input type="number" step="0.125"${attr("value", selectedCab.drawers?.slide_clearance ?? 0.5)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div></div></div>`);
+          $$renderer2.push(`<div class="col-span-2 border-t border-border pt-3 mt-2"><h3 class="text-sm font-semibold mb-2">Drawers</h3> <div class="grid grid-cols-2 gap-3"><div><label class="block text-xs text-text-secondary mb-1">Count</label> <input type="number" min="1" max="10"${attr("value", selectedCab().drawers?.count ?? 4)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="block text-xs text-text-secondary mb-1">Slide Clearance</label> <input type="number" step="0.125"${attr("value", selectedCab().drawers?.slide_clearance ?? 0.5)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div></div></div>`);
         } else {
           $$renderer2.push("<!--[!-->");
         }
         $$renderer2.push(`<!--]--> `);
-        if (showStretchers) {
+        if (showStretchers()) {
           $$renderer2.push("<!--[-->");
-          $$renderer2.push(`<div class="col-span-2 border-t border-border pt-3 mt-2"><h3 class="text-sm font-semibold mb-2">Stretchers</h3> <div class="grid grid-cols-2 gap-3"><div><label class="block text-xs text-text-secondary mb-1">Front Width</label> <input type="number" step="0.25"${attr("value", selectedCab.stretchers?.front_width ?? 4)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="flex items-center gap-2 text-xs text-text-secondary cursor-pointer mt-5"><input type="checkbox"${attr("checked", selectedCab.stretchers?.has_rear ?? true, true)} class="accent-accent"/> Has Rear Stretcher</label></div></div></div>`);
+          $$renderer2.push(`<div class="col-span-2 border-t border-border pt-3 mt-2"><h3 class="text-sm font-semibold mb-2">Stretchers</h3> <div class="grid grid-cols-2 gap-3"><div><label class="block text-xs text-text-secondary mb-1">Front Width</label> <input type="number" step="0.25"${attr("value", selectedCab().stretchers?.front_width ?? 4)} class="w-full px-3 py-2 bg-surface border border-border rounded text-sm text-text-primary focus:outline-none focus:border-accent"/></div> <div><label class="flex items-center gap-2 text-xs text-text-secondary cursor-pointer mt-5"><input type="checkbox"${attr("checked", selectedCab().stretchers?.has_rear ?? true, true)} class="accent-accent"/> Has Rear Stretcher</label></div></div></div>`);
         } else {
           $$renderer2.push("<!--[!-->");
         }

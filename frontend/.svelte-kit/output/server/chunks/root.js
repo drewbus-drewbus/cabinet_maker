@@ -1,5 +1,4 @@
-import { H as HYDRATION_ERROR, C as COMMENT_NODE, d as HYDRATION_END, f as HYDRATION_START, h as HYDRATION_START_ELSE, i as get_next_sibling, j as effect_tracking, k as get, r as render_effect, l as source, m as untrack, o as increment, q as queue_micro_task, p as active_effect, B as BOUNDARY_EFFECT, t as block, v as branch, w as create_text, x as Batch, y as pause_effect, z as move_effect, A as defer_effect, D as set_active_effect, E as set_active_reaction, F as set_component_context, G as handle_error, I as active_reaction, J as component_context, K as set_signal_status, L as DIRTY, M as schedule_effect, N as MAYBE_DIRTY, O as internal_set, P as destroy_effect, Q as invoke_error_boundary, R as svelte_boundary_reset_onerror, S as EFFECT_TRANSPARENT, T as EFFECT_PRESERVED, U as define_property, V as init_operations, W as get_first_child, X as hydration_failed, Y as clear_text_content, Z as component_root, _ as array_from, $ as is_passive_event, a0 as push, a1 as pop, a2 as set, a3 as LEGACY_PROPS, a4 as flushSync, a5 as mutable_source, a6 as render, a7 as setContext } from "./index2.js";
-import "clsx";
+import { H as HYDRATION_ERROR, C as COMMENT_NODE, f as HYDRATION_END, h as HYDRATION_START, i as HYDRATION_START_ELSE, j as get_next_sibling, k as effect_tracking, l as get, r as render_effect, m as source, o as untrack, p as increment, q as queue_micro_task, t as active_effect, B as BOUNDARY_EFFECT, v as block, w as branch, x as create_text, y as Batch, z as pause_effect, A as move_effect, D as set_signal_status, E as DIRTY, F as schedule_effect, M as MAYBE_DIRTY, G as defer_effect, I as set_active_effect, J as set_active_reaction, K as set_component_context, L as handle_error, N as active_reaction, O as component_context, P as internal_set, Q as destroy_effect, R as invoke_error_boundary, S as svelte_boundary_reset_onerror, T as HYDRATION_START_FAILED, U as EFFECT_TRANSPARENT, V as EFFECT_PRESERVED, W as define_property, X as init_operations, Y as get_first_child, Z as hydration_failed, _ as clear_text_content, $ as component_root, a0 as array_from, a1 as is_passive_event, a2 as push, a3 as pop, a4 as set, a5 as LEGACY_PROPS, a6 as flushSync, a7 as mutable_source, a8 as render, a9 as setContext, d as derived } from "./index2.js";
 function hydration_mismatch(location) {
   {
     console.warn(`https://svelte.dev/e/hydration_mismatch`);
@@ -88,13 +87,19 @@ function createSubscriber(start) {
   };
 }
 var flags = EFFECT_TRANSPARENT | EFFECT_PRESERVED;
-function boundary(node, props, children) {
-  new Boundary(node, props, children);
+function boundary(node, props, children, transform_error) {
+  new Boundary(node, props, children, transform_error);
 }
 class Boundary {
   /** @type {Boundary | null} */
   parent;
   is_pending = false;
+  /**
+   * API-level transformError transform function. Transforms errors before they reach the `failed` snippet.
+   * Inherited from parent boundary, or defaults to identity.
+   * @type {(error: unknown) => unknown}
+   */
+  transform_error;
   /** @type {TemplateNode} */
   #anchor;
   /** @type {TemplateNode | null} */
@@ -138,8 +143,9 @@ class Boundary {
    * @param {TemplateNode} node
    * @param {BoundaryProps} props
    * @param {((anchor: Node) => void)} children
+   * @param {((error: unknown) => unknown) | undefined} [transform_error]
    */
-  constructor(node, props, children) {
+  constructor(node, props, children, transform_error) {
     this.#anchor = node;
     this.#props = props;
     this.#children = (anchor) => {
@@ -153,6 +159,7 @@ class Boundary {
     };
     this.parent = /** @type {Effect} */
     active_effect.b;
+    this.transform_error = transform_error ?? this.parent?.transform_error ?? ((e) => e);
     this.#effect = block(() => {
       if (hydrating) {
         const comment = (
@@ -160,7 +167,12 @@ class Boundary {
           this.#hydrate_open
         );
         hydrate_next();
-        if (comment.data === HYDRATION_START_ELSE) {
+        const server_rendered_pending = comment.data === HYDRATION_START_ELSE;
+        const server_rendered_failed = comment.data.startsWith(HYDRATION_START_FAILED);
+        if (server_rendered_failed) {
+          const serialized_error = JSON.parse(comment.data.slice(HYDRATION_START_FAILED.length));
+          this.#hydrate_failed_content(serialized_error);
+        } else if (server_rendered_pending) {
           this.#hydrate_pending_content();
         } else {
           this.#hydrate_resolved_content();
@@ -179,6 +191,21 @@ class Boundary {
     } catch (error) {
       this.error(error);
     }
+  }
+  /**
+   * @param {unknown} error The deserialized error from the server's hydration comment
+   */
+  #hydrate_failed_content(error) {
+    const failed = this.#props.failed;
+    if (!failed) return;
+    this.#failed_effect = branch(() => {
+      failed(
+        this.#anchor,
+        () => error,
+        () => () => {
+        }
+      );
+    });
   }
   #hydrate_pending_content() {
     const pending = this.#props.pending;
@@ -203,7 +230,7 @@ class Boundary {
             this.#pending_effect = null;
           }
         );
-        this.is_pending = false;
+        this.#resolve();
       }
     });
   }
@@ -224,11 +251,24 @@ class Boundary {
         );
         this.#pending_effect = branch(() => pending(this.#anchor));
       } else {
-        this.is_pending = false;
+        this.#resolve();
       }
     } catch (error) {
       this.error(error);
     }
+  }
+  #resolve() {
+    this.is_pending = false;
+    for (const e of this.#dirty_effects) {
+      set_signal_status(e, DIRTY);
+      schedule_effect(e);
+    }
+    for (const e of this.#maybe_dirty_effects) {
+      set_signal_status(e, MAYBE_DIRTY);
+      schedule_effect(e);
+    }
+    this.#dirty_effects.clear();
+    this.#maybe_dirty_effects.clear();
   }
   /**
    * Defer an effect inside a pending boundary until the boundary resolves
@@ -283,17 +323,7 @@ class Boundary {
     }
     this.#pending_count += d;
     if (this.#pending_count === 0) {
-      this.is_pending = false;
-      for (const e of this.#dirty_effects) {
-        set_signal_status(e, DIRTY);
-        schedule_effect(e);
-      }
-      for (const e of this.#maybe_dirty_effects) {
-        set_signal_status(e, MAYBE_DIRTY);
-        schedule_effect(e);
-      }
-      this.#dirty_effects.clear();
-      this.#maybe_dirty_effects.clear();
+      this.#resolve();
       if (this.#pending_effect) {
         pause_effect(this.#pending_effect, () => {
           this.#pending_effect = null;
@@ -378,10 +408,10 @@ class Boundary {
         this.#render();
       });
     };
-    queue_micro_task(() => {
+    const handle_error_result = (transformed_error) => {
       try {
         calling_on_error = true;
-        onerror?.(error, reset);
+        onerror?.(transformed_error, reset);
         calling_on_error = false;
       } catch (error2) {
         invoke_error_boundary(error2, this.#effect && this.#effect.parent);
@@ -399,7 +429,7 @@ class Boundary {
               effect.f |= BOUNDARY_EFFECT;
               failed(
                 this.#anchor,
-                () => error,
+                () => transformed_error,
                 () => reset
               );
             });
@@ -413,10 +443,29 @@ class Boundary {
           }
         });
       }
+    };
+    queue_micro_task(() => {
+      var result;
+      try {
+        result = this.transform_error(error);
+      } catch (e) {
+        invoke_error_boundary(e, this.#effect && this.#effect.parent);
+        return;
+      }
+      if (result !== null && typeof result === "object" && typeof /** @type {any} */
+      result.then === "function") {
+        result.then(
+          handle_error_result,
+          /** @param {unknown} e */
+          (e) => invoke_error_boundary(e, this.#effect && this.#effect.parent)
+        );
+      } else {
+        handle_error_result(result);
+      }
     });
   }
 }
-const event_symbol = Symbol("events");
+const event_symbol = /* @__PURE__ */ Symbol("events");
 const all_registered_events = /* @__PURE__ */ new Set();
 const root_event_handles = /* @__PURE__ */ new Set();
 let last_propagated_event = null;
@@ -562,7 +611,7 @@ function hydrate(component, options) {
   }
 }
 const listeners = /* @__PURE__ */ new Map();
-function _mount(Component, { target, anchor, props = {}, events, context, intro = true }) {
+function _mount(Component, { target, anchor, props = {}, events, context, intro = true, transformError }) {
   init_operations();
   var component = void 0;
   var unmount2 = component_root(() => {
@@ -601,7 +650,8 @@ function _mount(Component, { target, anchor, props = {}, events, context, intro 
           }
         }
         pop();
-      }
+      },
+      transformError
     );
     var registered_events = /* @__PURE__ */ new Set();
     var event_handle = (events2) => {
@@ -719,7 +769,8 @@ class Svelte4Component {
       props,
       context: options.context,
       intro: options.intro ?? false,
-      recover: options.recover
+      recover: options.recover,
+      transformError: options.transformError
     });
     if (!options?.props?.$$host || options.sync === false) {
       flushSync();
@@ -772,8 +823,8 @@ class Svelte4Component {
 }
 function asClassComponent(component) {
   const component_constructor = asClassComponent$1(component);
-  const _render = (props, { context, csp } = {}) => {
-    const result = render(component, { props, context, csp });
+  const _render = (props, { context, csp, transformError } = {}) => {
+    const result = render(component, { props, context, csp, transformError });
     const munged = Object.defineProperties(
       /** @type {LegacyRenderResult & PromiseLike<LegacyRenderResult>} */
       {},
@@ -831,29 +882,44 @@ function Root($$renderer, $$props) {
     {
       stores.page.set(page);
     }
-    const Pyramid_1 = constructors[1];
+    const Pyramid_1 = derived(() => constructors[1]);
     if (constructors[1]) {
       $$renderer2.push("<!--[-->");
       const Pyramid_0 = constructors[0];
-      $$renderer2.push("<!---->");
-      Pyramid_0?.($$renderer2, {
-        data: data_0,
-        form,
-        params: page.params,
-        children: ($$renderer3) => {
-          $$renderer3.push("<!---->");
-          Pyramid_1?.($$renderer3, { data: data_1, form, params: page.params });
-          $$renderer3.push(`<!---->`);
-        },
-        $$slots: { default: true }
-      });
-      $$renderer2.push(`<!---->`);
+      if (Pyramid_0) {
+        $$renderer2.push("<!--[-->");
+        Pyramid_0($$renderer2, {
+          data: data_0,
+          form,
+          params: page.params,
+          children: ($$renderer3) => {
+            if (Pyramid_1()) {
+              $$renderer3.push("<!--[-->");
+              Pyramid_1()($$renderer3, { data: data_1, form, params: page.params });
+              $$renderer3.push("<!--]-->");
+            } else {
+              $$renderer3.push("<!--[!-->");
+              $$renderer3.push("<!--]-->");
+            }
+          },
+          $$slots: { default: true }
+        });
+        $$renderer2.push("<!--]-->");
+      } else {
+        $$renderer2.push("<!--[!-->");
+        $$renderer2.push("<!--]-->");
+      }
     } else {
       $$renderer2.push("<!--[!-->");
       const Pyramid_0 = constructors[0];
-      $$renderer2.push("<!---->");
-      Pyramid_0?.($$renderer2, { data: data_0, form, params: page.params });
-      $$renderer2.push(`<!---->`);
+      if (Pyramid_0) {
+        $$renderer2.push("<!--[-->");
+        Pyramid_0($$renderer2, { data: data_0, form, params: page.params });
+        $$renderer2.push("<!--]-->");
+      } else {
+        $$renderer2.push("<!--[!-->");
+        $$renderer2.push("<!--]-->");
+      }
     }
     $$renderer2.push(`<!--]--> `);
     {

@@ -1,5 +1,5 @@
 import { s as store_get, c as attr, e as escape_html, u as unsubscribe_stores } from "../../../chunks/index2.js";
-import { p as project, i as isDirty, d as isLoading, s as showToast } from "../../../chunks/project.js";
+import { p as project, i as isDirty, b as isLoading, s as showToast } from "../../../chunks/project.js";
 import { p as pushSnapshot } from "../../../chunks/history.js";
 import { a as updateProject } from "../../../chunks/api.js";
 function _page($$renderer, $$props) {

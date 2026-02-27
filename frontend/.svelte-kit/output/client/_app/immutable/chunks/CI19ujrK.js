@@ -1,0 +1,1 @@
+import{u as l,az as o,q as u,o as t}from"./DUOIInB9.js";function c(e){throw new Error("https://svelte.dev/e/lifecycle_outside_component")}function a(e){o===null&&c(),u&&o.l!==null?i(o).m.push(e):l(()=>{const n=t(e);if(typeof n=="function")return n})}function f(e){o===null&&c(),a(()=>()=>t(e))}function i(e){var n=e.l;return n.u??={a:[],b:[],m:[]}}export{f as a,a as o};

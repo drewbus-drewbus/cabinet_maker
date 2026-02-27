@@ -5,6 +5,7 @@ import * as devalue from "devalue";
 import { t as text_decoder, b as base64_encode, c as base64_decode } from "./utils.js";
 const SVELTE_KIT_ASSETS = "/_svelte_kit_assets";
 const ENDPOINT_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"];
+const MUTATIVE_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
 const PAGE_METHODS = ["GET", "POST", "HEAD"];
 function set_nested_value(object, path_string, value) {
   if (path_string.startsWith("n:")) {
@@ -126,32 +127,49 @@ async function deserialize_binary_form(request) {
   if (file_offsets_length > 0) {
     const file_offsets_buffer = await get_buffer(HEADER_BYTES + data_length, file_offsets_length);
     if (!file_offsets_buffer) throw deserialize_error("file offset table too short");
+    const parsed_offsets = JSON.parse(text_decoder.decode(file_offsets_buffer));
+    if (!Array.isArray(parsed_offsets) || parsed_offsets.some((n) => typeof n !== "number" || !Number.isInteger(n) || n < 0)) {
+      throw deserialize_error("invalid file offset table");
+    }
     file_offsets = /** @type {Array<number>} */
-    JSON.parse(text_decoder.decode(file_offsets_buffer));
+    parsed_offsets;
     files_start_offset = HEADER_BYTES + data_length + file_offsets_length;
   }
+  const file_spans = [];
   const [data, meta] = devalue.parse(text_decoder.decode(data_buffer), {
     File: ([name, type, size, last_modified, index]) => {
-      if (files_start_offset + file_offsets[index] + size > content_length) {
+      if (typeof name !== "string" || typeof type !== "string" || typeof size !== "number" || typeof last_modified !== "number" || typeof index !== "number") {
+        throw deserialize_error("invalid file metadata");
+      }
+      let offset = file_offsets[index];
+      if (offset === void 0) {
+        throw deserialize_error("duplicate file offset table index");
+      }
+      file_offsets[index] = void 0;
+      offset += files_start_offset;
+      if (offset + size > content_length) {
         throw deserialize_error("file data overflow");
       }
-      return new Proxy(
-        new LazyFile(
-          name,
-          type,
-          size,
-          last_modified,
-          get_chunk,
-          files_start_offset + file_offsets[index]
-        ),
-        {
-          getPrototypeOf() {
-            return File.prototype;
-          }
+      file_spans.push({ offset, size });
+      return new Proxy(new LazyFile(name, type, size, last_modified, get_chunk, offset), {
+        getPrototypeOf() {
+          return File.prototype;
         }
-      );
+      });
     }
   });
+  file_spans.sort((a, b) => a.offset - b.offset || a.size - b.size);
+  for (let i = 1; i < file_spans.length; i++) {
+    const previous = file_spans[i - 1];
+    const current = file_spans[i];
+    const previous_end = previous.offset + previous.size;
+    if (previous_end < current.offset) {
+      throw deserialize_error("gaps in file data");
+    }
+    if (previous_end > current.offset) {
+      throw deserialize_error("overlapping file data");
+    }
+  }
   void (async () => {
     let has_more = true;
     while (has_more) {
@@ -233,7 +251,7 @@ class LazyFile {
     return new ReadableStream({
       start: async (controller) => {
         let chunk_start = 0;
-        let start_chunk = null;
+        let start_chunk;
         for (chunk_index = 0; ; chunk_index++) {
           const chunk = await this.#get_chunk(chunk_index);
           if (!chunk) return null;
@@ -738,6 +756,7 @@ function create_remote_key(id, payload) {
 export {
   ENDPOINT_METHODS as E,
   INVALIDATED_PARAM as I,
+  MUTATIVE_METHODS as M,
   PAGE_METHODS as P,
   SVELTE_KIT_ASSETS as S,
   TRAILING_SLASH_PARAM as T,
@@ -762,9 +781,9 @@ export {
   serialize_uses as s,
   format_server_error as t,
   stringify_remote_arg as u,
-  flatten_issues as v,
-  create_field_proxy as w,
-  normalize_issue as x,
-  set_nested_value as y,
+  create_field_proxy as v,
+  normalize_issue as w,
+  set_nested_value as x,
+  flatten_issues as y,
   deep_set as z
 };

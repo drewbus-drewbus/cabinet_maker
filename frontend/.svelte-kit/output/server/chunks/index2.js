@@ -11,6 +11,7 @@ var object_prototype = Object.prototype;
 var array_prototype = Array.prototype;
 var get_prototype_of = Object.getPrototypeOf;
 var is_extensible = Object.isExtensible;
+var has_own_property = Object.prototype.hasOwnProperty;
 const noop = () => {
 };
 function run_all(arr) {
@@ -60,8 +61,8 @@ const WAS_MARKED = 1 << 16;
 const REACTION_IS_UPDATING = 1 << 21;
 const ASYNC = 1 << 22;
 const ERROR_VALUE = 1 << 23;
-const STATE_SYMBOL = Symbol("$state");
-const LEGACY_PROPS = Symbol("legacy props");
+const STATE_SYMBOL = /* @__PURE__ */ Symbol("$state");
+const LEGACY_PROPS = /* @__PURE__ */ Symbol("legacy props");
 const STALE_REACTION = new class StaleReactionError extends Error {
   name = "StaleReactionError";
   message = "The reaction that called `getAbortSignal()` was re-run or destroyed";
@@ -104,12 +105,13 @@ function svelte_boundary_reset_onerror() {
 }
 const HYDRATION_START = "[";
 const HYDRATION_START_ELSE = "[!";
+const HYDRATION_START_FAILED = "[?";
 const HYDRATION_END = "]";
 const HYDRATION_ERROR = {};
 const ELEMENT_IS_NAMESPACED = 1;
 const ELEMENT_PRESERVE_ATTRIBUTE_CASE = 1 << 1;
 const ELEMENT_IS_INPUT = 1 << 2;
-const UNINITIALIZED = Symbol();
+const UNINITIALIZED = /* @__PURE__ */ Symbol();
 let tracing_mode_flag = false;
 let component_context = null;
 function set_component_context(context) {
@@ -200,11 +202,11 @@ const STATUS_MASK = -7169;
 function set_signal_status(signal, status) {
   signal.f = signal.f & STATUS_MASK | status;
 }
-function update_derived_status(derived) {
-  if ((derived.f & CONNECTED) !== 0 || derived.deps === null) {
-    set_signal_status(derived, CLEAN);
+function update_derived_status(derived2) {
+  if ((derived2.f & CONNECTED) !== 0 || derived2.deps === null) {
+    set_signal_status(derived2, CLEAN);
   } else {
-    set_signal_status(derived, MAYBE_DIRTY);
+    set_signal_status(derived2, MAYBE_DIRTY);
   }
 }
 function clear_marked(deps) {
@@ -237,7 +239,6 @@ let last_scheduled_effect = null;
 let is_flushing = false;
 let is_flushing_sync = false;
 class Batch {
-  committed = false;
   /**
    * The current values of any sources that are updated in this batch
    * They keys of this map are identical to `this.#previous`
@@ -295,7 +296,7 @@ class Batch {
   #skipped_branches = /* @__PURE__ */ new Map();
   is_fork = false;
   #decrement_queued = false;
-  is_deferred() {
+  #is_deferred() {
     return this.is_fork || this.#blocking_pending > 0;
   }
   /**
@@ -338,7 +339,7 @@ class Batch {
     for (const root of root_effects) {
       this.#traverse_effect_tree(root, effects, render_effects);
     }
-    if (this.is_deferred()) {
+    if (this.#is_deferred()) {
       this.#defer_effects(render_effects);
       this.#defer_effects(effects);
       for (const [e, t] of this.#skipped_branches) {
@@ -353,6 +354,8 @@ class Batch {
       current_batch = null;
       flush_queued_effects(render_effects);
       flush_queued_effects(effects);
+      this.#dirty_effects.clear();
+      this.#maybe_dirty_effects.clear();
       this.#deferred?.resolve();
     }
     batch_values = null;
@@ -367,7 +370,6 @@ class Batch {
   #traverse_effect_tree(root, effects, render_effects) {
     root.f ^= CLEAN;
     var effect = root.first;
-    var pending_boundary = null;
     while (effect !== null) {
       var flags = effect.f;
       var is_branch = (flags & (BRANCH_EFFECT | ROOT_EFFECT)) !== 0;
@@ -376,8 +378,6 @@ class Batch {
       if (!skip && effect.fn !== null) {
         if (is_branch) {
           effect.f ^= CLEAN;
-        } else if (pending_boundary !== null && (flags & (EFFECT | RENDER_EFFECT | MANAGED_EFFECT)) !== 0) {
-          pending_boundary.b.defer_effect(effect);
         } else if ((flags & EFFECT) !== 0) {
           effects.push(effect);
         } else if (is_dirty(effect)) {
@@ -391,9 +391,6 @@ class Batch {
         }
       }
       while (effect !== null) {
-        if (effect === pending_boundary) {
-          pending_boundary = null;
-        }
         var next = effect.next;
         if (next !== null) {
           effect = next;
@@ -498,7 +495,7 @@ class Batch {
       current_batch = null;
       batch_values = previous_batch_values;
     }
-    this.committed = true;
+    this.#skipped_branches.clear();
     batches.delete(this);
   }
   /**
@@ -520,7 +517,7 @@ class Batch {
     this.#decrement_queued = true;
     queue_micro_task(() => {
       this.#decrement_queued = false;
-      if (!this.is_deferred()) {
+      if (!this.#is_deferred()) {
         this.revive();
       } else if (queued_root_effects.length > 0) {
         this.flush();
@@ -712,14 +709,21 @@ function depends_on(reaction, sources, checked) {
 }
 function schedule_effect(signal) {
   var effect = last_scheduled_effect = signal;
+  var boundary = effect.b;
+  if (boundary?.is_pending && (signal.f & (EFFECT | RENDER_EFFECT | MANAGED_EFFECT)) !== 0 && (signal.f & REACTION_RAN) === 0) {
+    boundary.defer_effect(signal);
+    return;
+  }
   while (effect.parent !== null) {
     effect = effect.parent;
     var flags = effect.f;
-    if (is_flushing && effect === active_effect && (flags & BLOCK_EFFECT) !== 0 && (flags & HEAD_EFFECT) === 0) {
+    if (is_flushing && effect === active_effect && (flags & BLOCK_EFFECT) !== 0 && (flags & HEAD_EFFECT) === 0 && (flags & REACTION_RAN) !== 0) {
       return;
     }
     if ((flags & (ROOT_EFFECT | BRANCH_EFFECT)) !== 0) {
-      if ((flags & CLEAN) === 0) return;
+      if ((flags & CLEAN) === 0) {
+        return;
+      }
       effect.f ^= CLEAN;
     }
   }
@@ -741,10 +745,10 @@ function reset_branch(effect, tracked) {
     e = e.next;
   }
 }
-function destroy_derived_effects(derived) {
-  var effects = derived.effects;
+function destroy_derived_effects(derived2) {
+  var effects = derived2.effects;
   if (effects !== null) {
-    derived.effects = null;
+    derived2.effects = null;
     for (var i = 0; i < effects.length; i += 1) {
       destroy_effect(
         /** @type {Effect} */
@@ -753,8 +757,8 @@ function destroy_derived_effects(derived) {
     }
   }
 }
-function get_derived_parent_effect(derived) {
-  var parent = derived.parent;
+function get_derived_parent_effect(derived2) {
+  var parent = derived2.parent;
   while (parent !== null) {
     if ((parent.f & DERIVED) === 0) {
       return (parent.f & DESTROYED) === 0 ? (
@@ -766,29 +770,29 @@ function get_derived_parent_effect(derived) {
   }
   return null;
 }
-function execute_derived(derived) {
+function execute_derived(derived2) {
   var value;
   var prev_active_effect = active_effect;
-  set_active_effect(get_derived_parent_effect(derived));
+  set_active_effect(get_derived_parent_effect(derived2));
   {
     try {
-      derived.f &= ~WAS_MARKED;
-      destroy_derived_effects(derived);
-      value = update_reaction(derived);
+      derived2.f &= ~WAS_MARKED;
+      destroy_derived_effects(derived2);
+      value = update_reaction(derived2);
     } finally {
       set_active_effect(prev_active_effect);
     }
   }
   return value;
 }
-function update_derived(derived) {
-  var value = execute_derived(derived);
-  if (!derived.equals(value)) {
-    derived.wv = increment_write_version();
-    if (!current_batch?.is_fork || derived.deps === null) {
-      derived.v = value;
-      if (derived.deps === null) {
-        set_signal_status(derived, CLEAN);
+function update_derived(derived2) {
+  var value = execute_derived(derived2);
+  if (!derived2.equals(value)) {
+    derived2.wv = increment_write_version();
+    if (!current_batch?.is_fork || derived2.deps === null) {
+      derived2.v = value;
+      if (derived2.deps === null) {
+        set_signal_status(derived2, CLEAN);
         return;
       }
     }
@@ -798,15 +802,15 @@ function update_derived(derived) {
   }
   if (batch_values !== null) {
     if (effect_tracking() || current_batch?.is_fork) {
-      batch_values.set(derived, value);
+      batch_values.set(derived2, value);
     }
   } else {
-    update_derived_status(derived);
+    update_derived_status(derived2);
   }
 }
-function freeze_derived_effects(derived) {
-  if (derived.effects === null) return;
-  for (const e of derived.effects) {
+function freeze_derived_effects(derived2) {
+  if (derived2.effects === null) return;
+  for (const e of derived2.effects) {
     if (e.teardown || e.ac) {
       e.teardown?.();
       e.ac?.abort(STALE_REACTION);
@@ -817,9 +821,9 @@ function freeze_derived_effects(derived) {
     }
   }
 }
-function unfreeze_derived_effects(derived) {
-  if (derived.effects === null) return;
-  for (const e of derived.effects) {
+function unfreeze_derived_effects(derived2) {
+  if (derived2.effects === null) return;
+  for (const e of derived2.effects) {
     if (e.teardown) {
       update_effect(e);
     }
@@ -875,14 +879,14 @@ function internal_set(source2, value) {
     var batch = Batch.ensure();
     batch.capture(source2, old_value);
     if ((source2.f & DERIVED) !== 0) {
-      const derived = (
+      const derived2 = (
         /** @type {Derived} */
         source2
       );
       if ((source2.f & DIRTY) !== 0) {
-        execute_derived(derived);
+        execute_derived(derived2);
       }
-      update_derived_status(derived);
+      update_derived_status(derived2);
     }
     source2.wv = increment_write_version();
     mark_reactions(source2, DIRTY);
@@ -926,16 +930,16 @@ function mark_reactions(signal, status) {
       set_signal_status(reaction, status);
     }
     if ((flags & DERIVED) !== 0) {
-      var derived = (
+      var derived2 = (
         /** @type {Derived} */
         reaction
       );
-      batch_values?.delete(derived);
+      batch_values?.delete(derived2);
       if ((flags & WAS_MARKED) === 0) {
         if (flags & CONNECTED) {
           reaction.f |= WAS_MARKED;
         }
-        mark_reactions(derived, MAYBE_DIRTY);
+        mark_reactions(derived2, MAYBE_DIRTY);
       }
     } else if (not_dirty) {
       if ((flags & BLOCK_EFFECT) !== 0 && eager_block_effects !== null) {
@@ -1252,11 +1256,11 @@ function create_effect(type, fn, sync) {
       push_effect(e, parent);
     }
     if (active_reaction !== null && (active_reaction.f & DERIVED) !== 0 && (type & ROOT_EFFECT) === 0) {
-      var derived = (
+      var derived2 = (
         /** @type {Derived} */
         active_reaction
       );
-      (derived.effects ??= []).push(e);
+      (derived2.effects ??= []).push(e);
     }
   }
   return effect;
@@ -1659,17 +1663,17 @@ function remove_reaction(signal, dependency) {
   // to be unused, when in fact it is used by the currently-updating parent. Checking `new_deps`
   // allows us to skip the expensive work of disconnecting and immediately reconnecting it
   (new_deps === null || !includes.call(new_deps, dependency))) {
-    var derived = (
+    var derived2 = (
       /** @type {Derived} */
       dependency
     );
-    if ((derived.f & CONNECTED) !== 0) {
-      derived.f ^= CONNECTED;
-      derived.f &= ~WAS_MARKED;
+    if ((derived2.f & CONNECTED) !== 0) {
+      derived2.f ^= CONNECTED;
+      derived2.f &= ~WAS_MARKED;
     }
-    update_derived_status(derived);
-    freeze_derived_effects(derived);
-    remove_reactions(derived, 0);
+    update_derived_status(derived2);
+    freeze_derived_effects(derived2);
+    remove_reactions(derived2, 0);
   }
 }
 function remove_reactions(signal, start_index) {
@@ -1739,29 +1743,29 @@ function get(signal) {
     return old_values.get(signal);
   }
   if (is_derived) {
-    var derived = (
+    var derived2 = (
       /** @type {Derived} */
       signal
     );
     if (is_destroying_effect) {
-      var value = derived.v;
-      if ((derived.f & CLEAN) === 0 && derived.reactions !== null || depends_on_old_values(derived)) {
-        value = execute_derived(derived);
+      var value = derived2.v;
+      if ((derived2.f & CLEAN) === 0 && derived2.reactions !== null || depends_on_old_values(derived2)) {
+        value = execute_derived(derived2);
       }
-      old_values.set(derived, value);
+      old_values.set(derived2, value);
       return value;
     }
-    var should_connect = (derived.f & CONNECTED) === 0 && !untracking && active_reaction !== null && (is_updating_effect || (active_reaction.f & CONNECTED) !== 0);
-    var is_new = (derived.f & REACTION_RAN) === 0;
-    if (is_dirty(derived)) {
+    var should_connect = (derived2.f & CONNECTED) === 0 && !untracking && active_reaction !== null && (is_updating_effect || (active_reaction.f & CONNECTED) !== 0);
+    var is_new = (derived2.f & REACTION_RAN) === 0;
+    if (is_dirty(derived2)) {
       if (should_connect) {
-        derived.f |= CONNECTED;
+        derived2.f |= CONNECTED;
       }
-      update_derived(derived);
+      update_derived(derived2);
     }
     if (should_connect && !is_new) {
-      unfreeze_derived_effects(derived);
-      reconnect(derived);
+      unfreeze_derived_effects(derived2);
+      reconnect(derived2);
     }
   }
   if (batch_values?.has(signal)) {
@@ -1772,11 +1776,11 @@ function get(signal) {
   }
   return signal.v;
 }
-function reconnect(derived) {
-  derived.f |= CONNECTED;
-  if (derived.deps === null) return;
-  for (const dep of derived.deps) {
-    (dep.reactions ??= []).push(derived);
+function reconnect(derived2) {
+  derived2.f |= CONNECTED;
+  if (derived2.deps === null) return;
+  for (const dep of derived2.deps) {
+    (dep.reactions ??= []).push(derived2);
     if ((dep.f & DERIVED) !== 0 && (dep.f & CONNECTED) === 0) {
       unfreeze_derived_effects(
         /** @type {Derived} */
@@ -1789,10 +1793,10 @@ function reconnect(derived) {
     }
   }
 }
-function depends_on_old_values(derived) {
-  if (derived.v === UNINITIALIZED) return true;
-  if (derived.deps === null) return false;
-  for (const dep of derived.deps) {
+function depends_on_old_values(derived2) {
+  if (derived2.v === UNINITIALIZED) return true;
+  if (derived2.deps === null) return false;
+  for (const dep of derived2.deps) {
     if (old_values.has(dep)) {
       return true;
     }
@@ -1878,7 +1882,7 @@ function attr(name, value, is_boolean = false) {
     is_boolean = true;
   }
   if (value == null || !value && is_boolean) return "";
-  const normalized = name in replacements && replacements[name].get(value) || value;
+  const normalized = has_own_property.call(replacements, name) && replacements[name].get(value) || value;
   const assignment = is_boolean ? `=""` : `="${escape_html(normalized, true)}"`;
   return ` ${name}${assignment}`;
 }
@@ -1896,7 +1900,7 @@ function to_class(value, hash, directives) {
     classname = classname ? classname + " " + hash : hash;
   }
   if (directives) {
-    for (var key in directives) {
+    for (var key of Object.keys(directives)) {
       if (directives[key]) {
         classname = classname ? classname + " " + key : key;
       } else if (classname.length) {
@@ -1918,7 +1922,7 @@ function to_class(value, hash, directives) {
 function append_styles(styles, important = false) {
   var separator = important ? " !important;" : ";";
   var css = "";
-  for (var key in styles) {
+  for (var key of Object.keys(styles)) {
     var value = styles[key];
     if (value != null && value !== "") {
       css += " " + key + ": " + value + separator;
@@ -2106,15 +2110,16 @@ function get_render_context() {
 let als = null;
 let text_encoder;
 let crypto;
+const obfuscated_import = (module_name) => import(
+  /* @vite-ignore */
+  module_name
+);
 async function sha256(data) {
   text_encoder ??= new TextEncoder();
   crypto ??= globalThis.crypto?.subtle?.digest ? globalThis.crypto : (
     // @ts-ignore - we don't install node types in the prod build
-    // don't use 'node:crypto' because static analysers will think we rely on node when we don't
-    (await import(
-      /* @vite-ignore */
-      "node:crypto"
-    )).webcrypto
+    // don't use import('node:crypto') directly because static analysers will think we rely on node when we don't
+    (await obfuscated_import("node:crypto")).webcrypto
   );
   const hash_buffer = await crypto.subtle.digest("SHA-256", text_encoder.encode(data));
   return base64_encode(hash_buffer);
@@ -2145,6 +2150,16 @@ class Renderer {
    * @type {boolean}
    */
   #is_component_body = false;
+  /**
+   * If set, this renderer is an error boundary. When async collection
+   * of the children fails, the failed snippet is rendered instead.
+   * @type {{
+   * 	failed: (renderer: Renderer, error: unknown, reset: () => void) => void;
+   * 	transformError: (error: unknown) => unknown;
+   * 	context: SSRContext | null;
+   * } | null}
+   */
+  #boundary = null;
   /**
    * The type of string content that this renderer is accumulating.
    * @type {RendererType}
@@ -2270,14 +2285,75 @@ class Renderer {
     const result = fn(child);
     set_ssr_context(parent);
     if (result instanceof Promise) {
+      result.catch(noop);
+      result.finally(() => set_ssr_context(null)).catch(noop);
       if (child.global.mode === "sync") {
         await_invalid();
       }
-      result.catch(() => {
-      });
       child.promise = result;
     }
     return child;
+  }
+  /**
+   * Render children inside an error boundary. If the children throw and the API-level
+   * `transformError` transform handles the error (doesn't re-throw), the `failed` snippet is
+   * rendered instead. Otherwise the error propagates.
+   *
+   * @param {{ failed?: (renderer: Renderer, error: unknown, reset: () => void) => void }} props
+   * @param {(renderer: Renderer) => MaybePromise<void>} children_fn
+   */
+  boundary(props, children_fn) {
+    const child = new Renderer(this.global, this);
+    this.#out.push(child);
+    const parent_context = ssr_context;
+    if (props.failed) {
+      child.#boundary = {
+        failed: props.failed,
+        transformError: this.global.transformError,
+        context: parent_context
+      };
+    }
+    set_ssr_context({
+      ...ssr_context,
+      p: parent_context,
+      c: null,
+      r: child
+    });
+    try {
+      const result = children_fn(child);
+      set_ssr_context(parent_context);
+      if (result instanceof Promise) {
+        if (child.global.mode === "sync") {
+          await_invalid();
+        }
+        result.catch(noop);
+        child.promise = result;
+      }
+    } catch (error) {
+      set_ssr_context(parent_context);
+      const failed_snippet = props.failed;
+      if (!failed_snippet) throw error;
+      const result = this.global.transformError(error);
+      child.#out.length = 0;
+      child.#boundary = null;
+      if (result instanceof Promise) {
+        if (this.global.mode === "sync") {
+          await_invalid();
+        }
+        child.promise = /** @type {Promise<unknown>} */
+        result.then((transformed) => {
+          set_ssr_context(parent_context);
+          child.#out.push(Renderer.#serialize_failed_boundary(transformed));
+          failed_snippet(child, transformed, noop);
+          child.#out.push(BLOCK_CLOSE);
+        });
+        child.promise.catch(noop);
+      } else {
+        child.#out.push(Renderer.#serialize_failed_boundary(result));
+        failed_snippet(child, result, noop);
+        child.#out.push(BLOCK_CLOSE);
+      }
+    }
   }
   /**
    * Create a component renderer. The component renderer inherits the state from the parent,
@@ -2323,7 +2399,7 @@ class Renderer {
   option(attrs, body, css_hash, classes, styles, flags, is_rich) {
     this.#out.push(`<option${attributes(attrs, css_hash, classes, styles, flags)}`);
     const close = (renderer, value, { head, body: body2 }) => {
-      if ("value" in attrs) {
+      if (has_own_property.call(attrs, "value")) {
         value = attrs.value;
       }
       if (value === this.local.select_value) {
@@ -2348,7 +2424,7 @@ class Renderer {
         }
       });
     } else {
-      close(this, body, { body });
+      close(this, body, { body: escape_html(body) });
     }
   }
   /**
@@ -2425,6 +2501,20 @@ class Renderer {
   }
   get length() {
     return this.#out.length;
+  }
+  /**
+   * Creates the hydration comment that marks the start of a failed boundary.
+   * The error is JSON-serialized and embedded inside an HTML comment for the client
+   * to parse during hydration. The JSON is escaped to prevent `-->` or `<!--` sequences
+   * from breaking out of the comment (XSS). Uses unicode escapes which `JSON.parse()`
+   * handles transparently.
+   * @param {unknown} error
+   * @returns {string}
+   */
+  static #serialize_failed_boundary(error) {
+    var json = JSON.stringify(error);
+    var escaped = json.replace(/>/g, "\\u003e").replace(/</g, "\\u003c");
+    return `<!--${HYDRATION_START_FAILED}${escaped}-->`;
   }
   /**
    * Only available on the server and when compiling with the `server` option.
@@ -2598,7 +2688,26 @@ class Renderer {
       if (typeof item === "string") {
         content[this.type] += item;
       } else if (item instanceof Renderer) {
-        await item.#collect_content_async(content);
+        if (item.#boundary) {
+          const boundary_content = { head: "", body: "" };
+          try {
+            await item.#collect_content_async(boundary_content);
+            content.head += boundary_content.head;
+            content.body += boundary_content.body;
+          } catch (error) {
+            const { context, failed, transformError } = item.#boundary;
+            set_ssr_context(context);
+            let transformed = await transformError(error);
+            const failed_renderer = new Renderer(item.global, item);
+            failed_renderer.type = item.type;
+            failed_renderer.#out.push(Renderer.#serialize_failed_boundary(transformed));
+            failed(failed_renderer, transformed, noop);
+            failed_renderer.#out.push(BLOCK_CLOSE);
+            await failed_renderer.#collect_content_async(content);
+          }
+        } else {
+          await item.#collect_content_async(content);
+        }
       }
     }
     return content;
@@ -2617,21 +2726,29 @@ class Renderer {
    * @template {Record<string, any>} Props
    * @param {'sync' | 'async'} mode
    * @param {import('svelte').Component<Props>} component
-   * @param {{ props?: Omit<Props, '$$slots' | '$$events'>; context?: Map<any, any>; idPrefix?: string; csp?: Csp }} options
+   * @param {{ props?: Omit<Props, '$$slots' | '$$events'>; context?: Map<any, any>; idPrefix?: string; csp?: Csp; transformError?: (error: unknown) => unknown }} options
    * @returns {Renderer}
    */
   static #open_render(mode, component, options) {
-    const renderer = new Renderer(
-      new SSRState(mode, options.idPrefix ? options.idPrefix + "-" : "", options.csp)
-    );
-    renderer.push(BLOCK_OPEN);
-    push();
-    if (options.context) ssr_context.c = options.context;
-    ssr_context.r = renderer;
-    component(renderer, options.props ?? {});
-    pop();
-    renderer.push(BLOCK_CLOSE);
-    return renderer;
+    var previous_context = ssr_context;
+    try {
+      const renderer = new Renderer(
+        new SSRState(
+          mode,
+          options.idPrefix ? options.idPrefix + "-" : "",
+          options.csp,
+          options.transformError
+        )
+      );
+      const context = { p: null, c: options.context ?? null, r: renderer };
+      set_ssr_context(context);
+      renderer.push(BLOCK_OPEN);
+      component(renderer, options.props ?? {});
+      renderer.push(BLOCK_CLOSE);
+      return renderer;
+    } finally {
+      set_ssr_context(previous_context);
+    }
   }
   /**
    * @param {AccumulatedContent} content
@@ -2707,16 +2824,26 @@ class SSRState {
   uid;
   /** @readonly @type {Set<{ hash: string; code: string }>} */
   css = /* @__PURE__ */ new Set();
+  /**
+   * `transformError` passed to `render`. Called when an error boundary catches an error.
+   * Throws by default if unset in `render`.
+   * @type {(error: unknown) => unknown}
+   */
+  transformError;
   /** @type {{ path: number[], value: string }} */
   #title = { path: [], value: "" };
   /**
    * @param {'sync' | 'async'} mode
    * @param {string} id_prefix
    * @param {Csp} csp
+   * @param {((error: unknown) => unknown) | undefined} [transformError]
    */
-  constructor(mode, id_prefix = "", csp = { hash: false }) {
+  constructor(mode, id_prefix = "", csp = { hash: false }, transformError) {
     this.mode = mode;
     this.csp = { ...csp, script_hashes: [] };
+    this.transformError = transformError ?? ((error) => {
+      throw error;
+    });
     let uid = 1;
     this.uid = () => `${id_prefix}s${uid++}`;
   }
@@ -2767,7 +2894,7 @@ function attributes(attrs, css_hash, classes, styles, flags = 0) {
   const is_html = (flags & ELEMENT_IS_NAMESPACED) === 0;
   const lowercase = (flags & ELEMENT_PRESERVE_ATTRIBUTE_CASE) === 0;
   const is_input = (flags & ELEMENT_IS_INPUT) !== 0;
-  for (name in attrs) {
+  for (name of Object.keys(attrs)) {
     if (typeof attrs[name] === "function") continue;
     if (name[0] === "$" && name[1] === "$") continue;
     if (INVALID_ATTR_NAME_CHAR_REGEX.test(name)) continue;
@@ -2775,6 +2902,7 @@ function attributes(attrs, css_hash, classes, styles, flags = 0) {
     if (lowercase) {
       name = name.toLowerCase();
     }
+    if (name.length > 2 && name.startsWith("on")) continue;
     if (is_input) {
       if (name === "defaultvalue" || name === "defaultchecked") {
         name = name === "defaultvalue" ? "value" : "checked";
@@ -2804,7 +2932,7 @@ function store_get(store_values, store_name, store) {
   return store_values[store_name][2];
 }
 function unsubscribe_stores(store_values) {
-  for (const store_name in store_values) {
+  for (const store_name of Object.keys(store_values)) {
     store_values[store_name][1]();
   }
 }
@@ -2814,71 +2942,96 @@ function ensure_array_like(array_like_or_iterator) {
   }
   return [];
 }
+function once(get_value) {
+  let value = (
+    /** @type {V} */
+    UNINITIALIZED
+  );
+  return () => {
+    if (value === UNINITIALIZED) {
+      value = get_value();
+    }
+    return value;
+  };
+}
+function derived(fn) {
+  const get_value = ssr_context === null ? fn : once(fn);
+  let updated_value;
+  return function(new_value) {
+    if (arguments.length === 0) {
+      return updated_value ?? get_value();
+    }
+    updated_value = new_value;
+    return updated_value;
+  };
+}
 export {
-  is_passive_event as $,
-  defer_effect as A,
+  component_root as $,
+  move_effect as A,
   BOUNDARY_EFFECT as B,
   COMMENT_NODE as C,
-  set_active_effect as D,
-  set_active_reaction as E,
-  set_component_context as F,
-  handle_error as G,
+  set_signal_status as D,
+  DIRTY as E,
+  schedule_effect as F,
+  defer_effect as G,
   HYDRATION_ERROR as H,
-  active_reaction as I,
-  component_context as J,
-  set_signal_status as K,
-  DIRTY as L,
-  schedule_effect as M,
-  MAYBE_DIRTY as N,
-  internal_set as O,
-  destroy_effect as P,
-  invoke_error_boundary as Q,
-  svelte_boundary_reset_onerror as R,
-  EFFECT_TRANSPARENT as S,
-  EFFECT_PRESERVED as T,
-  define_property as U,
-  init_operations as V,
-  get_first_child as W,
-  hydration_failed as X,
-  clear_text_content as Y,
-  component_root as Z,
-  array_from as _,
+  set_active_effect as I,
+  set_active_reaction as J,
+  set_component_context as K,
+  handle_error as L,
+  MAYBE_DIRTY as M,
+  active_reaction as N,
+  component_context as O,
+  internal_set as P,
+  destroy_effect as Q,
+  invoke_error_boundary as R,
+  svelte_boundary_reset_onerror as S,
+  HYDRATION_START_FAILED as T,
+  EFFECT_TRANSPARENT as U,
+  EFFECT_PRESERVED as V,
+  define_property as W,
+  init_operations as X,
+  get_first_child as Y,
+  hydration_failed as Z,
+  clear_text_content as _,
   attr_class as a,
-  push$1 as a0,
-  pop$1 as a1,
-  set as a2,
-  LEGACY_PROPS as a3,
-  flushSync as a4,
-  mutable_source as a5,
-  render as a6,
-  setContext as a7,
-  ssr_context as a8,
-  safe_not_equal as a9,
-  subscribe_to_store as aa,
-  run_all as ab,
+  array_from as a0,
+  is_passive_event as a1,
+  push$1 as a2,
+  pop$1 as a3,
+  set as a4,
+  LEGACY_PROPS as a5,
+  flushSync as a6,
+  mutable_source as a7,
+  render as a8,
+  setContext as a9,
+  ssr_context as aa,
+  safe_not_equal as ab,
+  subscribe_to_store as ac,
+  run_all as ad,
   ensure_array_like as b,
   attr as c,
-  HYDRATION_END as d,
+  derived as d,
   escape_html as e,
-  HYDRATION_START as f,
+  HYDRATION_END as f,
   getContext as g,
-  HYDRATION_START_ELSE as h,
-  get_next_sibling as i,
-  effect_tracking as j,
-  get as k,
-  source as l,
-  untrack as m,
+  HYDRATION_START as h,
+  HYDRATION_START_ELSE as i,
+  get_next_sibling as j,
+  effect_tracking as k,
+  get as l,
+  source as m,
   noop as n,
-  increment as o,
-  active_effect as p,
+  untrack as o,
+  increment as p,
   queue_micro_task as q,
   render_effect as r,
   store_get as s,
-  block as t,
+  active_effect as t,
   unsubscribe_stores as u,
-  branch as v,
-  create_text as w,
-  Batch as x,
-  pause_effect as y,
-  move_effect as z
+  block as v,
+  branch as w,
+  create_text as x,
+  Batch as y,
+  pause_effect as z
 };

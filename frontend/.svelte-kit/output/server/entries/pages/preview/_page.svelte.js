@@ -1,4 +1,4 @@
-import { a8 as ssr_context, s as store_get, b as ensure_array_like, e as escape_html, c as attr, a as attr_class, u as unsubscribe_stores } from "../../../chunks/index2.js";
+import { aa as ssr_context, s as store_get, b as ensure_array_like, e as escape_html, c as attr, a as attr_class, u as unsubscribe_stores, d as derived } from "../../../chunks/index2.js";
 import { p as project } from "../../../chunks/project.js";
 import "clsx";
 function onDestroy(fn) {
@@ -19,7 +19,7 @@ function _page($$renderer, $$props) {
     let exploded = false;
     let wireframe = false;
     let selectedPanel = null;
-    const cabinets = () => {
+    const cabinets = derived(() => () => {
       if (!store_get($$store_subs ??= {}, "$project", project)) return [];
       const cabs = [];
       if (store_get($$store_subs ??= {}, "$project", project).cabinet) cabs.push({
@@ -28,14 +28,14 @@ function _page($$renderer, $$props) {
       });
       store_get($$store_subs ??= {}, "$project", project).cabinets.forEach((c, i) => cabs.push({ name: c.name, index: i }));
       return cabs;
-    };
+    });
     if (store_get($$store_subs ??= {}, "$project", project)) {
       $$renderer2.push("<!--[-->");
       $$renderer2.push(`<div class="flex flex-col h-full"><div class="flex items-center justify-between mb-4"><h1 class="text-2xl font-bold">3D Preview</h1> <div class="flex items-center gap-3">`);
-      if (cabinets().length > 1) {
+      if (cabinets()().length > 1) {
         $$renderer2.push("<!--[-->");
         $$renderer2.push(`<select class="px-3 py-1 text-xs bg-surface border border-border rounded text-text-primary"><!--[-->`);
-        const each_array = ensure_array_like(cabinets());
+        const each_array = ensure_array_like(cabinets()());
         for (let $$index = 0, $$length = each_array.length; $$index < $$length; $$index++) {
           let cab = each_array[$$index];
           $$renderer2.option({ value: cab.index }, ($$renderer3) => {

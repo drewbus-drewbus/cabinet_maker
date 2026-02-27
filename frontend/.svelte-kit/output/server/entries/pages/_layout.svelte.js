@@ -1,7 +1,7 @@
 import "clsx";
-import { a as attr_class, s as store_get, e as escape_html, b as ensure_array_like, c as attr, u as unsubscribe_stores } from "../../chunks/index2.js";
+import { a as attr_class, s as store_get, e as escape_html, b as ensure_array_like, c as attr, u as unsubscribe_stores, d as derived } from "../../chunks/index2.js";
 import { p as page } from "../../chunks/index3.js";
-import { p as project, c as cabinetCount, t as totalPartCount, i as isDirty, a as projectPath, b as cachedParts, v as validationResult, d as isLoading, e as toasts } from "../../chunks/project.js";
+import { p as project, c as cabinetCount, t as totalPartCount, i as isDirty, a as projectPath, b as isLoading, d as cachedParts, v as validationResult, e as toasts } from "../../chunks/project.js";
 import { s as sidebarCollapsed } from "../../chunks/ui.js";
 import { c as canUndo, a as canRedo } from "../../chunks/history.js";
 function Sidebar($$renderer, $$props) {
@@ -89,28 +89,28 @@ function TopBar($$renderer, $$props) {
 function StatusBar($$renderer, $$props) {
   $$renderer.component(($$renderer2) => {
     var $$store_subs;
-    const partCount = store_get($$store_subs ??= {}, "$cachedParts", cachedParts).length;
-    const errorCount = store_get($$store_subs ??= {}, "$validationResult", validationResult)?.errors?.length ?? 0;
-    const warningCount = store_get($$store_subs ??= {}, "$validationResult", validationResult)?.warnings?.length ?? 0;
+    const partCount = derived(() => store_get($$store_subs ??= {}, "$cachedParts", cachedParts).length);
+    const errorCount = derived(() => store_get($$store_subs ??= {}, "$validationResult", validationResult)?.errors?.length ?? 0);
+    const warningCount = derived(() => store_get($$store_subs ??= {}, "$validationResult", validationResult)?.warnings?.length ?? 0);
     $$renderer2.push(`<footer class="flex items-center justify-between px-4 py-1 bg-bg-secondary border-t border-border text-xs text-text-secondary"><div class="flex items-center gap-4">`);
     if (store_get($$store_subs ??= {}, "$project", project)) {
       $$renderer2.push("<!--[-->");
-      $$renderer2.push(`<span>Units: ${escape_html(store_get($$store_subs ??= {}, "$project", project).project.units)}</span> <span>Materials: ${escape_html(store_get($$store_subs ??= {}, "$project", project).materials.length + (store_get($$store_subs ??= {}, "$project", project).material ? 1 : 0))}</span> <span>Parts: ${escape_html(partCount)}</span>`);
+      $$renderer2.push(`<span>Units: ${escape_html(store_get($$store_subs ??= {}, "$project", project).project.units)}</span> <span>Materials: ${escape_html(store_get($$store_subs ??= {}, "$project", project).materials.length + (store_get($$store_subs ??= {}, "$project", project).material ? 1 : 0))}</span> <span>Parts: ${escape_html(partCount())}</span>`);
     } else {
       $$renderer2.push("<!--[!-->");
       $$renderer2.push(`<span>No project loaded</span>`);
     }
     $$renderer2.push(`<!--]--></div> <div class="flex items-center gap-4">`);
-    if (errorCount > 0) {
+    if (errorCount() > 0) {
       $$renderer2.push("<!--[-->");
-      $$renderer2.push(`<span class="text-error">${escape_html(errorCount)} error${escape_html(errorCount !== 1 ? "s" : "")}</span>`);
+      $$renderer2.push(`<span class="text-error">${escape_html(errorCount())} error${escape_html(errorCount() !== 1 ? "s" : "")}</span>`);
     } else {
       $$renderer2.push("<!--[!-->");
     }
     $$renderer2.push(`<!--]--> `);
-    if (warningCount > 0) {
+    if (warningCount() > 0) {
       $$renderer2.push("<!--[-->");
-      $$renderer2.push(`<span class="text-warning">${escape_html(warningCount)} warning${escape_html(warningCount !== 1 ? "s" : "")}</span>`);
+      $$renderer2.push(`<span class="text-warning">${escape_html(warningCount())} warning${escape_html(warningCount() !== 1 ? "s" : "")}</span>`);
     } else {
       $$renderer2.push("<!--[!-->");
     }

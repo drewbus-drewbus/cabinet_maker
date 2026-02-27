@@ -122,7 +122,7 @@
 		const idx = $selectedCabinetIndex;
 		project.update((p) => {
 			if (p && idx !== null && idx < p.cabinets.length) {
-				(p.cabinets[idx] as Record<string, unknown>)[field] = value;
+				(p.cabinets[idx] as unknown as Record<string, unknown>)[field] = value;
 			}
 			return p;
 		});

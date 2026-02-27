@@ -90,7 +90,7 @@
 	function updateMaterialField(field: string, value: unknown) {
 		project.update((p) => {
 			if (p && selectedMaterialIdx !== null && selectedMaterialIdx < p.materials.length) {
-				(p.materials[selectedMaterialIdx] as Record<string, unknown>)[field] = value;
+				(p.materials[selectedMaterialIdx] as unknown as Record<string, unknown>)[field] = value;
 			}
 			return p;
 		});
@@ -100,7 +100,7 @@
 	function updateToolField(field: string, value: unknown) {
 		project.update((p) => {
 			if (p && selectedToolIdx !== null && selectedToolIdx < p.tools.length) {
-				(p.tools[selectedToolIdx] as Record<string, unknown>)[field] = value;
+				(p.tools[selectedToolIdx] as unknown as Record<string, unknown>)[field] = value;
 			}
 			return p;
 		});

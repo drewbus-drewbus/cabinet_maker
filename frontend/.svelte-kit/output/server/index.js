@@ -3,7 +3,7 @@ import { json, text, error } from "@sveltejs/kit";
 import { Redirect, SvelteKitError, ActionFailure, HttpError } from "@sveltejs/kit/internal";
 import { with_request_store, merge_tracing, try_get_request_store } from "@sveltejs/kit/internal/server";
 import { a as assets, b as base, c as app_dir, r as relative, o as override, d as reset } from "./chunks/environment.js";
-import { E as ENDPOINT_METHODS, P as PAGE_METHODS, n as negotiate, m as method_not_allowed, h as handle_error_and_jsonify, g as get_status, i as is_form_content_type, a as normalize_error, b as get_global_name, s as serialize_uses, c as clarify_devalue_error, d as get_node_type, e as escape_html, S as SVELTE_KIT_ASSETS, f as create_remote_key, j as static_error_page, r as redirect_response, p as parse_remote_arg, k as stringify, l as deserialize_binary_form, o as has_prerendered_path, T as TRAILING_SLASH_PARAM, I as INVALIDATED_PARAM, q as handle_fatal_error, t as format_server_error } from "./chunks/shared.js";
+import { E as ENDPOINT_METHODS, P as PAGE_METHODS, n as negotiate, m as method_not_allowed, h as handle_error_and_jsonify, g as get_status, i as is_form_content_type, a as normalize_error, b as get_global_name, s as serialize_uses, c as clarify_devalue_error, d as get_node_type, e as escape_html, S as SVELTE_KIT_ASSETS, f as create_remote_key, j as static_error_page, r as redirect_response, p as parse_remote_arg, k as stringify, l as deserialize_binary_form, o as has_prerendered_path, T as TRAILING_SLASH_PARAM, I as INVALIDATED_PARAM, q as handle_fatal_error, M as MUTATIVE_METHODS, t as format_server_error } from "./chunks/shared.js";
 import * as devalue from "devalue";
 import { m as make_trackable, d as disable_search, a as decode_params, S as SCHEME, v as validate_layout_server_exports, b as validate_layout_exports, c as validate_page_server_exports, e as validate_page_exports, n as normalize_path, r as resolve, f as decode_pathname, g as validate_server_exports } from "./chunks/exports.js";
 import { b as base64_encode, t as text_decoder, a as text_encoder, g as get_relative_path } from "./chunks/utils.js";
@@ -45,8 +45,8 @@ async function render_endpoint(event, event_state, mod, state) {
       return new Response(void 0, { status: 204 });
     }
   }
-  event_state.is_endpoint_request = true;
   try {
+    event_state.allows_commands = true;
     const response = await with_request_store(
       { event, state: event_state },
       () => handler(
@@ -362,6 +362,7 @@ async function call_action(event, event_state, actions) {
     },
     fn: async (current2) => {
       const traced_event = merge_tracing(event, current2);
+      event_state.allows_commands = true;
       const result = await with_request_store(
         { event: traced_event, state: event_state },
         () => action(traced_event)
@@ -411,13 +412,14 @@ function try_serialize(data, fn, route_id) {
     );
     if (data instanceof Response) {
       throw new Error(
-        `Data returned from action inside ${route_id} is not serializable. Form actions need to return plain objects or fail(). E.g. return { success: true } or return fail(400, { message: "invalid" });`
+        `Data returned from action inside ${route_id} is not serializable. Form actions need to return plain objects or fail(). E.g. return { success: true } or return fail(400, { message: "invalid" });`,
+        { cause: e }
       );
     }
     if ("path" in error2) {
       let message = `Data returned from action inside ${route_id} is not serializable: ${error2.message}`;
       if (error2.path !== "") message += ` (data.${error2.path})`;
-      throw new Error(message);
+      throw new Error(message, { cause: e });
     }
     throw error2;
   }
@@ -481,7 +483,6 @@ function server_data_serializer(event, event_state, options2) {
                 options2,
                 new Error(`Failed to serialize promise while rendering ${event.route.id}`)
               );
-              data = void 0;
               str = devalue.uneval([, error2], replacer);
             }
             return {
@@ -525,7 +526,7 @@ function server_data_serializer(event, event_state, options2) {
           event,
           /** @type {any} */
           e
-        ));
+        ), { cause: e });
       }
     },
     get_data(csp) {
@@ -618,7 +619,7 @@ function server_data_serializer_json(event, event_state, options2) {
           event,
           /** @type {any} */
           e
-        ));
+        ), { cause: e });
       }
     },
     get_data() {
@@ -1594,6 +1595,7 @@ async function render_response({
     const fetch2 = globalThis.fetch;
     try {
       if (BROWSER) ;
+      event_state.allows_commands = false;
       rendered = await with_request_store({ event, state: event_state }, async () => {
         if (relative) override({ base: base$1, assets: assets$1 });
         const maybe_promise = options2.root.render(props, render_opts);
@@ -2230,6 +2232,7 @@ async function handle_remote_call_internal(event, state, options2, manifest, id)
         );
       }
       const { data: data2, meta, form_data } = await deserialize_binary_form(event.request);
+      form_client_refreshes = meta.remote_refreshes;
       if (additional_args && !("id" in data2)) {
         data2.id = JSON.parse(decodeURIComponent(additional_args));
       }
@@ -3376,6 +3379,7 @@ async function internal_respond(request, options2, manifest, state) {
             current: root_span
           }
         };
+        event_state.allows_commands = MUTATIVE_METHODS.includes(request.method);
         return await with_request_store(
           { event: traced_event, state: event_state },
           () => options2.hooks.handle({

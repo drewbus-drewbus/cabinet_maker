@@ -158,7 +158,7 @@
       "_history.js"
     ],
     "css": [
-      "_app/immutable/assets/_layout.DzaFYCrk.css"
+      "_app/immutable/assets/_layout.D5afwOJM.css"
     ]
   },
   "src/routes/+layout.ts": {
@@ -223,7 +223,8 @@
     "imports": [
       "_index2.js",
       "_project.js",
-      "_history.js"
+      "_history.js",
+      "_api.js"
     ]
   },
   "src/routes/nesting/+page.svelte": {

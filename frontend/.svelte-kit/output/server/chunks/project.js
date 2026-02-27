@@ -29,9 +29,9 @@ derived(
 );
 export {
   projectPath as a,
-  cachedParts as b,
+  isLoading as b,
   cabinetCount as c,
-  isLoading as d,
+  cachedParts as d,
   toasts as e,
   cutlistRows as f,
   isDirty as i,
