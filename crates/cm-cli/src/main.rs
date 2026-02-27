@@ -68,7 +68,7 @@ enum Commands {
         #[arg(short, long, default_value = "0.75")]
         thickness: f64,
         /// Output TOML file path
-        #[arg(short, long)]
+        #[arg(long)]
         output: Option<PathBuf>,
         /// Import mode: "layer" for layer-based, "raw" for raw rectangles
         #[arg(long, default_value = "raw")]
