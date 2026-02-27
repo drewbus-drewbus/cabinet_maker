@@ -86,7 +86,7 @@ pub fn arc_fit(toolpath: &mut Toolpath, tolerance: f64) {
     while i < segments.len() {
         // Only try to fit arcs on consecutive Linear segments at the same Z
         if !matches!(segments[i].motion, Motion::Linear) {
-            new_segments.push(segments[i].clone());
+            new_segments.push(segments[i]);
             i += 1;
             continue;
         }
@@ -106,7 +106,7 @@ pub fn arc_fit(toolpath: &mut Toolpath, tolerance: f64) {
         if run_len < 3 {
             // Not enough segments for arc fitting
             for seg in &segments[run_start..run_end] {
-                new_segments.push(seg.clone());
+                new_segments.push(*seg);
             }
             i = run_end;
             continue;
@@ -128,7 +128,7 @@ pub fn arc_fit(toolpath: &mut Toolpath, tolerance: f64) {
                     segments[j - 1].endpoint
                 } else {
                     // First segment in run with no predecessor — skip arc fitting for this point
-                    new_segments.push(segments[j].clone());
+                    new_segments.push(segments[j]);
                     j += 1;
                     continue;
                 };
@@ -174,7 +174,7 @@ pub fn arc_fit(toolpath: &mut Toolpath, tolerance: f64) {
             }
 
             // Couldn't fit an arc, keep the linear segment
-            new_segments.push(segments[j].clone());
+            new_segments.push(segments[j]);
             j += 1;
         }
 
@@ -294,7 +294,7 @@ pub fn apply_corner_fillets(toolpath: &mut Toolpath, tool_radius: f64, style: Fi
     let mut new_segments: Vec<ToolpathSegment> = Vec::with_capacity(toolpath.segments.len() * 2);
 
     for i in 0..toolpath.segments.len() {
-        new_segments.push(toolpath.segments[i].clone());
+        new_segments.push(toolpath.segments[i]);
 
         // Need at least a previous segment and a next segment (both Linear at same Z)
         if i == 0 || i + 1 >= toolpath.segments.len() {

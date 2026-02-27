@@ -263,15 +263,15 @@ pub fn validate_project(
     }
 
     // Check if sheet exceeds machine bed
-    if let (Some(sw), Some(sl)) = (sheet_width, sheet_length) {
-        if sw > travel_x || sl > travel_y {
-            result.warnings.push(ValidationWarning::SheetExceedsBed {
-                sheet_width: sw,
-                sheet_length: sl,
-                travel_x,
-                travel_y,
-            });
-        }
+    if let (Some(sw), Some(sl)) = (sheet_width, sheet_length)
+        && (sw > travel_x || sl > travel_y)
+    {
+        result.warnings.push(ValidationWarning::SheetExceedsBed {
+            sheet_width: sw,
+            sheet_length: sl,
+            travel_x,
+            travel_y,
+        });
     }
 
     result

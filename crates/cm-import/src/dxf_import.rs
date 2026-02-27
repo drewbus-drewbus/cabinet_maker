@@ -533,5 +533,371 @@ mod tests {
         let options = ImportOptions::default();
         let result = import_from_drawing(&drawing, &options);
         assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), ImportError::NoRectanglesFound));
+    }
+
+    #[test]
+    fn test_raw_import_skipped_entities_counted() {
+        let mut drawing = dxf::Drawing::new();
+
+        // Add a valid rectangle
+        let lwp = make_closed_rect(vec![
+            vertex(0.0, 0.0), vertex(10.0, 0.0),
+            vertex(10.0, 5.0), vertex(0.0, 5.0),
+        ]);
+        drawing.add_entity(dxf::entities::Entity::new(
+            dxf::entities::EntityType::LwPolyline(lwp),
+        ));
+
+        // Add a triangle (will be skipped)
+        let mut tri = dxf::entities::LwPolyline::default();
+        tri.set_is_closed(true);
+        tri.vertices = vec![vertex(0.0, 0.0), vertex(5.0, 0.0), vertex(2.5, 4.0)];
+        drawing.add_entity(dxf::entities::Entity::new(
+            dxf::entities::EntityType::LwPolyline(tri),
+        ));
+
+        let options = ImportOptions { mode: ImportMode::Raw, ..Default::default() };
+        let result = import_from_drawing(&drawing, &options).unwrap();
+        assert_eq!(result.parts.len(), 1);
+        assert_eq!(result.skipped_entities, 1);
+        assert_eq!(result.warnings.len(), 1);
+    }
+
+    #[test]
+    fn test_raw_import_preserves_part_dimensions() {
+        let mut drawing = dxf::Drawing::new();
+
+        // Specific fractional dimensions
+        let lwp = make_closed_rect(vec![
+            vertex(5.0, 10.0), vertex(17.5, 10.0),
+            vertex(17.5, 22.25), vertex(5.0, 22.25),
+        ]);
+        drawing.add_entity(dxf::entities::Entity::new(
+            dxf::entities::EntityType::LwPolyline(lwp),
+        ));
+
+        let options = ImportOptions { mode: ImportMode::Raw, thickness: 0.5, ..Default::default() };
+        let result = import_from_drawing(&drawing, &options).unwrap();
+        assert_eq!(result.parts.len(), 1);
+        let part = &result.parts[0];
+        assert!((part.rect.width - 12.5).abs() < 1e-6, "width should be 12.5, got {}", part.rect.width);
+        assert!((part.rect.height - 12.25).abs() < 1e-6, "height should be 12.25, got {}", part.rect.height);
+    }
+
+    #[test]
+    fn test_five_vertex_closed_polyline() {
+        // 5 vertices where first == last (explicitly closed)
+        let mut drawing = dxf::Drawing::new();
+        let mut lwp = dxf::entities::LwPolyline::default();
+        lwp.set_is_closed(false); // not marked as closed
+        lwp.vertices = vec![
+            vertex(0.0, 0.0), vertex(8.0, 0.0),
+            vertex(8.0, 4.0), vertex(0.0, 4.0),
+            vertex(0.0, 0.0), // closing vertex
+        ];
+        drawing.add_entity(dxf::entities::Entity::new(
+            dxf::entities::EntityType::LwPolyline(lwp),
+        ));
+
+        let options = ImportOptions { mode: ImportMode::Raw, ..Default::default() };
+        let result = import_from_drawing(&drawing, &options).unwrap();
+        assert_eq!(result.parts.len(), 1);
+        assert!((result.parts[0].rect.width - 8.0).abs() < 1e-6);
+        assert!((result.parts[0].rect.height - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_open_polyline_with_4_vertices_skipped() {
+        // 4 vertices but NOT closed — should be skipped
+        let mut drawing = dxf::Drawing::new();
+        let mut lwp = dxf::entities::LwPolyline::default();
+        lwp.set_is_closed(false);
+        lwp.vertices = vec![
+            vertex(0.0, 0.0), vertex(8.0, 0.0),
+            vertex(8.0, 4.0), vertex(0.0, 4.0),
+        ];
+        drawing.add_entity(dxf::entities::Entity::new(
+            dxf::entities::EntityType::LwPolyline(lwp),
+        ));
+
+        let options = ImportOptions::default();
+        let result = import_from_drawing(&drawing, &options);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_degenerate_zero_width_rect_skipped() {
+        // A rectangle with zero width (all points on same X line)
+        let mut drawing = dxf::Drawing::new();
+        let lwp = make_closed_rect(vec![
+            vertex(5.0, 0.0), vertex(5.0, 0.0),
+            vertex(5.0, 10.0), vertex(5.0, 10.0),
+        ]);
+        drawing.add_entity(dxf::entities::Entity::new(
+            dxf::entities::EntityType::LwPolyline(lwp),
+        ));
+
+        let options = ImportOptions::default();
+        let result = import_from_drawing(&drawing, &options);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_layer_based_rabbet_on_edge() {
+        let mut drawing = dxf::Drawing::new();
+
+        // Part on PARTS layer (12" x 30")
+        let lwp = make_closed_rect(vec![
+            vertex(0.0, 0.0), vertex(12.0, 0.0),
+            vertex(12.0, 30.0), vertex(0.0, 30.0),
+        ]);
+        let mut entity = dxf::entities::Entity::new(
+            dxf::entities::EntityType::LwPolyline(lwp),
+        );
+        entity.common.layer = "PARTS".to_string();
+        drawing.add_entity(entity);
+
+        // Rabbet on right edge, on RABBETS layer
+        let rabbet_lwp = make_closed_rect(vec![
+            vertex(11.75, 0.0), vertex(12.0, 0.0),
+            vertex(12.0, 30.0), vertex(11.75, 30.0),
+        ]);
+        let mut rabbet_entity = dxf::entities::Entity::new(
+            dxf::entities::EntityType::LwPolyline(rabbet_lwp),
+        );
+        rabbet_entity.common.layer = "RABBETS".to_string();
+        drawing.add_entity(rabbet_entity);
+
+        let options = ImportOptions {
+            mode: ImportMode::LayerBased,
+            thickness: 0.75,
+            ..Default::default()
+        };
+
+        let result = import_from_drawing(&drawing, &options).unwrap();
+        assert_eq!(result.parts.len(), 1);
+        // Should have 1 rabbet operation
+        let rabbet_ops: Vec<_> = result.parts[0].operations.iter()
+            .filter(|op| matches!(op, PartOperation::Rabbet(_)))
+            .collect();
+        assert_eq!(rabbet_ops.len(), 1, "should detect rabbet on right edge");
+    }
+
+    #[test]
+    fn test_layer_based_default_layer_treated_as_parts() {
+        let mut drawing = dxf::Drawing::new();
+
+        // Rectangle on default layer "0"
+        let lwp = make_closed_rect(vec![
+            vertex(0.0, 0.0), vertex(6.0, 0.0),
+            vertex(6.0, 3.0), vertex(0.0, 3.0),
+        ]);
+        let mut entity = dxf::entities::Entity::new(
+            dxf::entities::EntityType::LwPolyline(lwp),
+        );
+        entity.common.layer = "0".to_string();
+        drawing.add_entity(entity);
+
+        let options = ImportOptions {
+            mode: ImportMode::LayerBased,
+            ..Default::default()
+        };
+
+        let result = import_from_drawing(&drawing, &options).unwrap();
+        assert_eq!(result.parts.len(), 1, "default layer '0' should be treated as parts");
+    }
+
+    #[test]
+    fn test_layer_names_case_insensitive() {
+        let mut drawing = dxf::Drawing::new();
+
+        // Part on "Parts" (mixed case)
+        let lwp = make_closed_rect(vec![
+            vertex(0.0, 0.0), vertex(10.0, 0.0),
+            vertex(10.0, 8.0), vertex(0.0, 8.0),
+        ]);
+        let mut entity = dxf::entities::Entity::new(
+            dxf::entities::EntityType::LwPolyline(lwp),
+        );
+        entity.common.layer = "Parts".to_string();
+        drawing.add_entity(entity);
+
+        // Dado on "dados" (lowercase)
+        let dado_lwp = make_closed_rect(vec![
+            vertex(0.0, 3.625), vertex(10.0, 3.625),
+            vertex(10.0, 4.375), vertex(0.0, 4.375),
+        ]);
+        let mut dado_entity = dxf::entities::Entity::new(
+            dxf::entities::EntityType::LwPolyline(dado_lwp),
+        );
+        dado_entity.common.layer = "dados".to_string();
+        drawing.add_entity(dado_entity);
+
+        let options = ImportOptions {
+            mode: ImportMode::LayerBased,
+            ..Default::default()
+        };
+
+        let result = import_from_drawing(&drawing, &options).unwrap();
+        assert_eq!(result.parts.len(), 1, "case-insensitive layer should work");
+        assert!(!result.parts[0].operations.is_empty(), "should detect dado on mixed-case layer");
+    }
+
+    #[test]
+    fn test_large_coordinate_values() {
+        let mut drawing = dxf::Drawing::new();
+
+        let lwp = make_closed_rect(vec![
+            vertex(10000.0, 20000.0), vertex(10048.0, 20000.0),
+            vertex(10048.0, 20096.0), vertex(10000.0, 20096.0),
+        ]);
+        drawing.add_entity(dxf::entities::Entity::new(
+            dxf::entities::EntityType::LwPolyline(lwp),
+        ));
+
+        let options = ImportOptions { mode: ImportMode::Raw, ..Default::default() };
+        let result = import_from_drawing(&drawing, &options).unwrap();
+        assert_eq!(result.parts.len(), 1);
+        assert!((result.parts[0].rect.width - 48.0).abs() < 1e-6);
+        assert!((result.parts[0].rect.height - 96.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_multiple_parts_raw_mode() {
+        let mut drawing = dxf::Drawing::new();
+
+        for i in 0..5 {
+            let offset = i as f64 * 20.0;
+            let lwp = make_closed_rect(vec![
+                vertex(offset, 0.0), vertex(offset + 10.0, 0.0),
+                vertex(offset + 10.0, 5.0), vertex(offset, 5.0),
+            ]);
+            drawing.add_entity(dxf::entities::Entity::new(
+                dxf::entities::EntityType::LwPolyline(lwp),
+            ));
+        }
+
+        let options = ImportOptions { mode: ImportMode::Raw, ..Default::default() };
+        let result = import_from_drawing(&drawing, &options).unwrap();
+        assert_eq!(result.parts.len(), 5);
+        assert_eq!(result.skipped_entities, 0);
+    }
+
+    #[test]
+    fn test_non_axis_aligned_polyline_skipped() {
+        // A rotated rectangle (diamond shape) — not axis-aligned
+        let mut drawing = dxf::Drawing::new();
+        let lwp = make_closed_rect(vec![
+            vertex(5.0, 0.0), vertex(10.0, 5.0),
+            vertex(5.0, 10.0), vertex(0.0, 5.0),
+        ]);
+        drawing.add_entity(dxf::entities::Entity::new(
+            dxf::entities::EntityType::LwPolyline(lwp),
+        ));
+
+        let options = ImportOptions::default();
+        let result = import_from_drawing(&drawing, &options);
+        assert!(result.is_err(), "diamond shape should not be imported as a rectangle");
+    }
+
+    #[test]
+    fn test_circles_only_drawing_in_raw_mode() {
+        // Drawing with only circles — no rectangles found in raw mode
+        let mut drawing = dxf::Drawing::new();
+        let circle = dxf::entities::Circle {
+            center: dxf::Point::new(5.0, 5.0, 0.0),
+            radius: 1.0,
+            ..Default::default()
+        };
+        drawing.add_entity(dxf::entities::Entity::new(
+            dxf::entities::EntityType::Circle(circle),
+        ));
+
+        let options = ImportOptions { mode: ImportMode::Raw, ..Default::default() };
+        // Raw mode only uses rectangles, but circles are still collected.
+        // The result depends on whether import_from_drawing treats circles-only as OK.
+        let result = import_from_drawing(&drawing, &options);
+        // Currently circles are collected but raw mode only builds parts from rects
+        // so this should return parts from circles (0 parts) — but the check is
+        // `rects.is_empty() && circles.is_empty()`, so circles are not empty here
+        // which means it returns Ok with 0 parts
+        if let Ok(res) = result {
+            assert_eq!(res.parts.len(), 0, "circles only should produce 0 parts in raw mode");
+        }
+    }
+
+    #[test]
+    fn test_custom_dado_depth_fraction() {
+        let mut drawing = dxf::Drawing::new();
+
+        // Part
+        let lwp = make_closed_rect(vec![
+            vertex(0.0, 0.0), vertex(12.0, 0.0),
+            vertex(12.0, 30.0), vertex(0.0, 30.0),
+        ]);
+        let mut entity = dxf::entities::Entity::new(
+            dxf::entities::EntityType::LwPolyline(lwp),
+        );
+        entity.common.layer = "PARTS".to_string();
+        drawing.add_entity(entity);
+
+        // Dado
+        let dado_lwp = make_closed_rect(vec![
+            vertex(0.0, 14.625), vertex(12.0, 14.625),
+            vertex(12.0, 15.375), vertex(0.0, 15.375),
+        ]);
+        let mut dado_entity = dxf::entities::Entity::new(
+            dxf::entities::EntityType::LwPolyline(dado_lwp),
+        );
+        dado_entity.common.layer = "DADOS".to_string();
+        drawing.add_entity(dado_entity);
+
+        let options = ImportOptions {
+            mode: ImportMode::LayerBased,
+            thickness: 1.0,
+            dado_depth_fraction: 0.333,
+            ..Default::default()
+        };
+
+        let result = import_from_drawing(&drawing, &options).unwrap();
+        assert_eq!(result.parts.len(), 1);
+        // Should have a dado operation with custom depth
+        let dado_ops: Vec<_> = result.parts[0].operations.iter()
+            .filter(|op| matches!(op, PartOperation::Dado(_)))
+            .collect();
+        assert_eq!(dado_ops.len(), 1, "should detect dado");
+        if let PartOperation::Dado(dado) = dado_ops[0] {
+            assert!((dado.depth - 0.333).abs() < 1e-3, "dado depth should use dado_depth_fraction * thickness");
+        }
+    }
+
+    #[test]
+    fn test_line_entities_skipped_with_warning() {
+        let mut drawing = dxf::Drawing::new();
+
+        // Add a valid rectangle
+        let lwp = make_closed_rect(vec![
+            vertex(0.0, 0.0), vertex(10.0, 0.0),
+            vertex(10.0, 5.0), vertex(0.0, 5.0),
+        ]);
+        drawing.add_entity(dxf::entities::Entity::new(
+            dxf::entities::EntityType::LwPolyline(lwp),
+        ));
+
+        // Add a line entity (will be skipped)
+        let line = dxf::entities::Line {
+            p1: dxf::Point::new(0.0, 0.0, 0.0),
+            p2: dxf::Point::new(10.0, 10.0, 0.0),
+            ..Default::default()
+        };
+        drawing.add_entity(dxf::entities::Entity::new(
+            dxf::entities::EntityType::Line(line),
+        ));
+
+        let options = ImportOptions { mode: ImportMode::Raw, ..Default::default() };
+        let result = import_from_drawing(&drawing, &options).unwrap();
+        assert_eq!(result.parts.len(), 1);
+        assert_eq!(result.skipped_entities, 1, "line should be counted as skipped");
     }
 }

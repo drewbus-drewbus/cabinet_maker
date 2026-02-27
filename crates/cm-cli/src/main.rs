@@ -1,26 +1,15 @@
-mod bom;
-
-use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 
-use cm_cabinet::project::{Project, TaggedPart};
-use cm_cabinet::part::PartOperation;
-use cm_cam::ops::{
-    generate_profile_cut, generate_dado_toolpath, generate_rabbet_toolpath, generate_drill,
-    generate_dovetail_toolpath, generate_box_joint_toolpath, generate_mortise_toolpath,
-    generate_tenon_toolpath, generate_dowel_holes,
-    CamConfig, RabbetEdge, DovetailEdge,
+use cm_cabinet::project::Project;
+use cm_nesting::packer::NestingConfig;
+use cm_pipeline::{
+    GenerateConfig, ProgressEvent, ProgressReporter,
+    generate_bom, generate_pipeline,
 };
-use cm_cam::{Toolpath, arc_fit, optimize_rapid_order, apply_corner_fillets, FilletStyle};
-use cm_core::geometry::{Point2D, Rect};
-use cm_core::tool::Tool;
-use cm_nesting::packer::{NestingConfig, NestingPart, nest_parts};
-use cm_post::gcode::GCodeEmitter;
 use cm_post::machine::MachineProfile;
-use cm_post::validate::{self, PartInfo};
 
 #[derive(Parser)]
 #[command(name = "cabinet-maker", version, about = "Generate CNC G-code from cabinet designs")]
@@ -95,6 +84,33 @@ enum Commands {
     },
 }
 
+/// CLI progress reporter that prints events to stdout.
+struct CliReporter;
+
+impl ProgressReporter for CliReporter {
+    fn report(&self, event: ProgressEvent) {
+        match event {
+            ProgressEvent::PartsGenerated { count } => {
+                println!("\nGenerated {} part entries.", count);
+            }
+            ProgressEvent::HardwareOpsAdded { count } => {
+                println!("Hardware: {} drill operations added", count);
+            }
+            ProgressEvent::NestingComplete { material, sheets, utilization } => {
+                println!("\n--- Material: {} ---", material);
+                println!("  Sheets required: {}", sheets);
+                println!("  Utilization: {:.1}%", utilization);
+            }
+            ProgressEvent::GcodeEmitted { material: _, sheet } => {
+                println!("  G-code generated for sheet {}", sheet);
+            }
+            ProgressEvent::Complete => {
+                println!("\nGeneration complete.");
+            }
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
@@ -140,61 +156,30 @@ fn run_generate(project_file: &PathBuf, cli: &Cli) -> Result<(), Box<dyn std::er
     println!("Project: {}", project.project.name);
     println!("Units: {:?}", project.project.units);
 
-    // Print cabinet info and validate
+    // Print cabinet info
     let all_cabs = project.all_cabinets();
     for cab in &all_cabs {
         println!("Cabinet: {} ({:?}, {:.1}\" x {:.1}\" x {:.1}\")",
             cab.name, cab.cabinet_type, cab.width, cab.height, cab.depth,
         );
-
-        let cab_issues = cm_cabinet::cabinet::validate_cabinet(cab);
-        for issue in &cab_issues {
-            let prefix = match issue.severity {
-                cm_cabinet::cabinet::ValidationSeverity::Warning => "WARNING",
-                cm_cabinet::cabinet::ValidationSeverity::Error => "ERROR",
-            };
-            println!("  {}: {}", prefix, issue.message);
-        }
-        let has_cab_error = cab_issues.iter().any(|i|
-            i.severity == cm_cabinet::cabinet::ValidationSeverity::Error);
-        if has_cab_error && !cli.no_validate {
-            eprintln!("Cabinet validation failed — aborting.");
-            std::process::exit(1);
-        }
     }
 
-    // Load or default machine profile
+    // Load machine profile
     let machine = load_machine(cli)?;
     println!("Machine: {}", machine.machine.name);
 
-    // Generate all parts (handles both legacy and multi-cabinet)
-    let mut tagged_parts = project.generate_all_parts();
+    // Configure and run the pipeline
+    let config = GenerateConfig {
+        skip_validation: cli.no_validate,
+        enable_hardware: !cli.no_hardware,
+        rpm: cli.rpm,
+    };
 
-    // Apply hardware boring patterns (shelf pins, hinge plates, slide holes)
-    if !cli.no_hardware {
-        let mut hw_op_count = 0;
-        // Build index for O(1) lookup instead of O(n) linear find per hardware op
-        let part_index: HashMap<(String, String), usize> = tagged_parts
-            .iter()
-            .enumerate()
-            .map(|(i, tp)| ((tp.cabinet_name.clone(), tp.part.label.clone()), i))
-            .collect();
-        for entry in &all_cabs {
-            let hw_ops = cm_hardware::generate_all_hardware_ops(entry);
-            for hw_op in hw_ops {
-                if let Some(&idx) = part_index.get(&(entry.name.clone(), hw_op.target_part.clone())) {
-                    tagged_parts[idx].part.operations.push(hw_op.operation);
-                    hw_op_count += 1;
-                }
-            }
-        }
-        if hw_op_count > 0 {
-            println!("Hardware: {} drill operations added", hw_op_count);
-        }
-    }
+    let reporter = CliReporter;
+    let result = generate_pipeline(&project, &machine, &config, &reporter)?;
 
-    println!("\nGenerated {} part entries:", tagged_parts.len());
-    for tp in &tagged_parts {
+    // Print part details
+    for tp in &result.tagged_parts {
         let prefix = if all_cabs.len() > 1 {
             format!("{}/", tp.cabinet_name)
         } else {
@@ -212,82 +197,16 @@ fn run_generate(project_file: &PathBuf, cli: &Cli) -> Result<(), Box<dyn std::er
         );
     }
 
-    // Determine tool and RPM
-    let tool = project
-        .tools
-        .first()
-        .cloned()
-        .unwrap_or_else(Tool::quarter_inch_endmill);
-    let rpm = cli.rpm.unwrap_or(machine.machine.max_rpm * 0.9);
+    println!("\nTool: {} (T{}, {} dia)", result.tool.description, result.tool.number, result.tool.diameter);
+    println!("RPM: {}", result.rpm as u32);
 
-    // --- Validation ---
-    if !cli.no_validate {
-        let part_infos: Vec<PartInfo> = tagged_parts.iter().map(|tp| {
-            let max_op_depth = tp.part.operations.iter().map(|op| match op {
-                PartOperation::Dado(d) => d.depth,
-                PartOperation::Rabbet(r) => r.depth,
-                PartOperation::Drill(d) => d.depth,
-                PartOperation::PocketHole(_) => 0.0,
-                PartOperation::Dovetail(d) => d.depth,
-                PartOperation::BoxJoint(b) => b.depth,
-                PartOperation::Mortise(m) => m.depth,
-                PartOperation::Tenon(t) => t.shoulder_depth,
-                PartOperation::Dowel(d) => d.depth,
-            }).fold(0.0f64, f64::max);
-            PartInfo {
-                label: format!("{}/{}", tp.cabinet_name, tp.part.label),
-                width: tp.part.rect.width,
-                height: tp.part.rect.height,
-                thickness: tp.part.thickness,
-                max_operation_depth: max_op_depth,
-            }
-        }).collect();
-
-        // Use the first material's sheet size for validation
-        let primary_mat = project.primary_material();
-        let validation = validate::validate_project(
-            &part_infos,
-            &project.tools,
-            rpm,
-            &machine,
-            primary_mat.and_then(|m| m.sheet_width),
-            primary_mat.and_then(|m| m.sheet_length),
-        );
-
-        if validation.has_warnings() {
-            println!("\nValidation warnings:");
-            for warning in &validation.warnings {
-                println!("  WARNING: {}", warning);
-            }
-        }
-
-        if validation.has_errors() {
-            eprintln!("\nValidation ERRORS (aborting):");
-            for error in &validation.errors {
-                eprintln!("  ERROR: {}", error);
-            }
-            std::process::exit(1);
-        }
-    }
-
-    // --- Group by material and nest/generate per group ---
-    let groups = Project::group_parts_by_material(&tagged_parts);
-
-    let cam_config = CamConfig {
-        safe_z: machine.post.safe_z,
-        rapid_z: machine.post.rapid_z,
-        ..Default::default()
-    };
-
-    // Create output directory
+    // Create output directory and write files
     fs::create_dir_all(&cli.output_dir)?;
 
-    let emitter = GCodeEmitter::new(&machine, project.project.units);
+    let groups = Project::group_parts_by_material(&result.tagged_parts);
     let multi_material = groups.len() > 1;
-    let mut total_sheets_all: u32 = 0;
 
-    for group in &groups {
-        let mat = &group.material;
+    for (group, mat_output) in groups.iter().zip(result.material_groups.iter()) {
         let mat_slug = slugify(&group.material_name);
 
         let group_output_dir = if multi_material {
@@ -298,280 +217,38 @@ fn run_generate(project_file: &PathBuf, cli: &Cli) -> Result<(), Box<dyn std::er
             cli.output_dir.clone()
         };
 
-        println!("\n--- Material: {} ({:.3}\" thick) ---", group.material_name, mat.thickness);
-
-        // Build nesting parts for this material group
-        let nesting_config = NestingConfig {
-            sheet_width: mat.sheet_width.unwrap_or(48.0),
-            sheet_length: mat.sheet_length.unwrap_or(96.0),
-            kerf: 0.25,
-            edge_margin: 0.5,
-            allow_rotation: false,
-            guillotine_compatible: false,
-        };
-
-        let mut nesting_parts = Vec::new();
-        for tp in &group.parts {
-            for i in 0..tp.part.quantity {
-                let prefix = if all_cabs.len() > 1 {
-                    format!("{}/", tp.cabinet_name)
-                } else {
-                    String::new()
-                };
-                let id = if tp.part.quantity > 1 {
-                    format!("{}{}_{}", prefix, tp.part.label, i + 1)
-                } else {
-                    format!("{}{}", prefix, tp.part.label)
-                };
-                nesting_parts.push(NestingPart {
-                    id,
-                    width: tp.part.rect.width,
-                    height: tp.part.rect.height,
-                    can_rotate: false,
-                });
-            }
-        }
-
-        let nesting_result = nest_parts(&nesting_parts, &nesting_config);
-        total_sheets_all += nesting_result.sheet_count as u32;
-
-        println!("Nesting result:");
-        println!("  Sheets required: {}", nesting_result.sheet_count);
-        println!("  Utilization: {:.1}%", nesting_result.overall_utilization);
-        if !nesting_result.unplaced.is_empty() {
-            println!("  WARNING: {} parts could not be placed:", nesting_result.unplaced.len());
-            for id in &nesting_result.unplaced {
-                println!("    - {}", id);
-            }
-        }
-
-        for sheet in &nesting_result.sheets {
-            println!("  Sheet {}: {} parts, {:.1}% utilization",
-                sheet.sheet_index + 1, sheet.parts.len(), sheet.utilization);
-        }
-
-        println!("\nTool: {} (T{}, {} dia)", tool.description, tool.number, tool.diameter);
-        println!("RPM: {}", rpm as u32);
-
-        // Generate G-code per sheet
-        for sheet in &nesting_result.sheets {
-            let mut sheet_toolpaths: Vec<Toolpath> = Vec::new();
-
-            println!("\nGenerating toolpaths for sheet {}:", sheet.sheet_index + 1);
-
-            for placed in &sheet.parts {
-                let base_label = strip_nesting_id(&placed.id);
-
-                // Find the matching tagged part
-                let tp_match = group.parts.iter()
-                    .find(|tp| tp.part.label == base_label || placed.id.ends_with(&tp.part.label))
-                    .expect(&format!("Part definition not found for '{}'", placed.id));
-
-                let positioned_rect = Rect::new(
-                    placed.rect.origin,
-                    placed.rect.width,
-                    placed.rect.height,
-                );
-
-                println!("  {} at ({:.3}\", {:.3}\")", placed.id, placed.rect.origin.x, placed.rect.origin.y);
-
-                for op in &tp_match.part.operations {
-                    match op {
-                        PartOperation::Dado(dado) => {
-                            let horizontal = dado.orientation == cm_cabinet::part::DadoOrientation::Horizontal;
-                            let tp = generate_dado_toolpath(
-                                &positioned_rect, dado.position, dado.width, dado.depth,
-                                horizontal, &tool, rpm, &cam_config,
-                            );
-                            println!("    - Dado at {:.3}\", width {:.3}\", depth {:.3}\"",
-                                dado.position, dado.width, dado.depth);
-                            sheet_toolpaths.push(tp);
-                        }
-                        PartOperation::Rabbet(rabbet) => {
-                            let edge = match rabbet.edge {
-                                cm_cabinet::part::Edge::Top => RabbetEdge::Top,
-                                cm_cabinet::part::Edge::Bottom => RabbetEdge::Bottom,
-                                cm_cabinet::part::Edge::Left => RabbetEdge::Left,
-                                cm_cabinet::part::Edge::Right => RabbetEdge::Right,
-                            };
-                            let tp = generate_rabbet_toolpath(
-                                &positioned_rect, edge, rabbet.width, rabbet.depth,
-                                &tool, rpm, &cam_config,
-                            );
-                            println!("    - Rabbet on {:?} edge, width {:.3}\", depth {:.3}\"",
-                                rabbet.edge, rabbet.width, rabbet.depth);
-                            sheet_toolpaths.push(tp);
-                        }
-                        PartOperation::Drill(drill) => {
-                            let tp = generate_drill(
-                                Point2D::new(
-                                    positioned_rect.min_x() + drill.x,
-                                    positioned_rect.min_y() + drill.y,
-                                ),
-                                drill.depth, &tool, rpm, &cam_config,
-                            );
-                            println!("    - Drill at ({:.3}\", {:.3}\"), depth {:.3}\"",
-                                drill.x, drill.y, drill.depth);
-                            sheet_toolpaths.push(tp);
-                        }
-                        PartOperation::PocketHole(ph) => {
-                            if ph.cnc_operation {
-                                let tp = generate_drill(
-                                    Point2D::new(
-                                        positioned_rect.min_x() + ph.x,
-                                        positioned_rect.min_y() + ph.y,
-                                    ),
-                                    0.625,
-                                    &tool, rpm, &cam_config,
-                                );
-                                println!("    - Pocket hole at ({:.3}\", {:.3}\")", ph.x, ph.y);
-                                sheet_toolpaths.push(tp);
-                            } else {
-                                println!("    - Pocket hole at ({:.3}\", {:.3}\") (off-CNC)", ph.x, ph.y);
-                            }
-                        }
-                        PartOperation::Dovetail(dt) => {
-                            let edge = match dt.edge {
-                                cm_cabinet::part::Edge::Top => DovetailEdge::Top,
-                                cm_cabinet::part::Edge::Bottom => DovetailEdge::Bottom,
-                                cm_cabinet::part::Edge::Left => DovetailEdge::Left,
-                                cm_cabinet::part::Edge::Right => DovetailEdge::Right,
-                            };
-                            let tp = generate_dovetail_toolpath(
-                                &positioned_rect, edge, dt.tail_count,
-                                dt.tail_width, dt.pin_width, dt.depth,
-                                &tool, rpm, &cam_config,
-                            );
-                            println!("    - Dovetail on {:?} edge, {} tails, depth {:.3}\"",
-                                dt.edge, dt.tail_count, dt.depth);
-                            sheet_toolpaths.push(tp);
-                        }
-                        PartOperation::BoxJoint(bj) => {
-                            let edge = match bj.edge {
-                                cm_cabinet::part::Edge::Top => DovetailEdge::Top,
-                                cm_cabinet::part::Edge::Bottom => DovetailEdge::Bottom,
-                                cm_cabinet::part::Edge::Left => DovetailEdge::Left,
-                                cm_cabinet::part::Edge::Right => DovetailEdge::Right,
-                            };
-                            let tp = generate_box_joint_toolpath(
-                                &positioned_rect, edge, bj.finger_width,
-                                bj.finger_count, bj.depth,
-                                &tool, rpm, &cam_config,
-                            );
-                            println!("    - Box joint on {:?} edge, {} fingers, depth {:.3}\"",
-                                bj.edge, bj.finger_count, bj.depth);
-                            sheet_toolpaths.push(tp);
-                        }
-                        PartOperation::Mortise(m) => {
-                            let tp = generate_mortise_toolpath(
-                                &positioned_rect, m.x, m.y,
-                                m.width, m.length, m.depth,
-                                &tool, rpm, &cam_config,
-                            );
-                            println!("    - Mortise at ({:.3}\", {:.3}\"), {:.3}\" x {:.3}\" x {:.3}\"",
-                                m.x, m.y, m.width, m.length, m.depth);
-                            sheet_toolpaths.push(tp);
-                        }
-                        PartOperation::Tenon(t) => {
-                            let edge = match t.edge {
-                                cm_cabinet::part::Edge::Top => DovetailEdge::Top,
-                                cm_cabinet::part::Edge::Bottom => DovetailEdge::Bottom,
-                                cm_cabinet::part::Edge::Left => DovetailEdge::Left,
-                                cm_cabinet::part::Edge::Right => DovetailEdge::Right,
-                            };
-                            let tp = generate_tenon_toolpath(
-                                &positioned_rect, edge, t.thickness,
-                                t.width, t.length, t.shoulder_depth,
-                                &tool, rpm, &cam_config,
-                            );
-                            println!("    - Tenon on {:?} edge, {:.3}\" x {:.3}\" x {:.3}\"",
-                                t.edge, t.thickness, t.width, t.length);
-                            sheet_toolpaths.push(tp);
-                        }
-                        PartOperation::Dowel(d) => {
-                            let hole_positions: Vec<(f64, f64)> = d.holes
-                                .iter()
-                                .map(|h| (h.x, h.y))
-                                .collect();
-                            let tp = generate_dowel_holes(
-                                &positioned_rect, &hole_positions,
-                                d.dowel_diameter, d.depth,
-                                &tool, rpm, &cam_config,
-                            );
-                            println!("    - Dowel holes: {} holes, {:.3}\" dia, depth {:.3}\"",
-                                d.holes.len(), d.dowel_diameter, d.depth);
-                            sheet_toolpaths.push(tp);
-                        }
-                    }
-                }
-
-                // Profile cut at nested position
-                let tp = generate_profile_cut(&positioned_rect, tp_match.part.thickness, &tool, rpm, &cam_config);
-                println!("    - Profile cut: {:.3}\" x {:.3}\" through {:.3}\"",
-                    positioned_rect.width, positioned_rect.height, tp_match.part.thickness);
-                sheet_toolpaths.push(tp);
-            }
-
-            // Apply dog-bone corner fillets to dado/rabbet toolpaths
-            for tp in &mut sheet_toolpaths {
-                apply_corner_fillets(tp, tool.diameter / 2.0, FilletStyle::DogBone);
-            }
-
-            // Arc fit: collapse linear segments into arcs where possible
-            for tp in &mut sheet_toolpaths {
-                arc_fit(tp, 0.001);
-            }
-
-            // Optimize inter-part rapid travel order
-            optimize_rapid_order(&mut sheet_toolpaths);
-
-            // Post-generation toolpath validation
-            if !cli.no_validate {
-                let tp_validation = validate::validate_toolpaths(&sheet_toolpaths, &machine);
-                if tp_validation.has_errors() {
-                    eprintln!("\nToolpath validation ERRORS on sheet {} (aborting):", sheet.sheet_index + 1);
-                    for error in &tp_validation.errors {
-                        eprintln!("  ERROR: {}", error);
-                    }
-                    std::process::exit(1);
-                }
-            }
-
-            // Emit G-code for this sheet
-            let gcode = emitter.emit(&sheet_toolpaths);
-            let filename = if nesting_result.sheet_count > 1 {
-                format!("sheet-{}.nc", sheet.sheet_index + 1)
+        // Write G-code files
+        for (i, gcode) in mat_output.sheet_gcodes.iter().enumerate() {
+            let filename = if mat_output.sheet_gcodes.len() > 1 {
+                format!("sheet-{}.nc", i + 1)
             } else {
                 "program.nc".into()
             };
             let output_path = group_output_dir.join(&filename);
-            fs::write(&output_path, &gcode)?;
-
-            println!("  G-code written to: {} ({} lines, {} toolpaths)",
+            fs::write(&output_path, gcode)?;
+            println!("  G-code written to: {} ({} lines)",
                 output_path.display(),
                 gcode.lines().count(),
-                sheet_toolpaths.len(),
             );
         }
 
-        // Write cut list for this material group
-        write_cutlist(&group_output_dir, &project, &group.parts, &nesting_result, &group.material_name)?;
+        // Write cut list
+        write_cutlist(&group_output_dir, &project, &group.parts, &mat_output.nesting_result, &group.material_name)?;
 
         // Optional exports
         if cli.export_csv {
             write_csv(&group_output_dir, &project, &group.parts, &group.material_name)?;
         }
         if cli.export_svg {
-            write_svg(&group_output_dir, &nesting_result, &nesting_config)?;
+            write_svg(&group_output_dir, &mat_output.nesting_result, &mat_output.nesting_config)?;
         }
     }
 
-    // Comprehensive BOM (outside the per-material loop — covers all cabinets/materials)
+    // Comprehensive BOM
     if cli.export_bom {
         let primary_mat = project.primary_material();
         let cost_per_sheet = primary_mat.and_then(|m| m.cost_per_unit);
-        // Reuse sheet count accumulated during the per-material nesting loop above
-        let comprehensive_bom = bom::generate_bom(&project, &tagged_parts, total_sheets_all, cost_per_sheet);
+        let comprehensive_bom = generate_bom(&project, &result.tagged_parts, result.total_sheets, cost_per_sheet);
         let bom_json = serde_json::to_string_pretty(&comprehensive_bom)?;
         let bom_path = cli.output_dir.join("bom.json");
         fs::write(&bom_path, &bom_json)?;
@@ -584,7 +261,7 @@ fn run_generate(project_file: &PathBuf, cli: &Cli) -> Result<(), Box<dyn std::er
 }
 
 fn run_import(
-    dxf_file: &PathBuf,
+    dxf_file: &Path,
     thickness: f64,
     output: Option<&std::path::Path>,
     mode: &str,
@@ -636,7 +313,7 @@ fn run_import(
 }
 
 fn run_cut(
-    dxf_file: &PathBuf,
+    dxf_file: &Path,
     thickness: f64,
     cli: &Cli,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -669,7 +346,7 @@ fn run_cut(
 fn build_project_from_parts(
     parts: &[cm_cabinet::part::Part],
     thickness: f64,
-    source_file: &PathBuf,
+    source_file: &Path,
 ) -> Project {
     use cm_cabinet::cabinet::{Cabinet, CabinetType, ShelfJoinery, BackJoinery};
     use cm_core::material::{Material, MaterialType};
@@ -723,26 +400,6 @@ fn build_project_from_parts(
     }
 }
 
-/// Strip the cabinet prefix and/or quantity suffix from a nesting part ID.
-/// E.g., "sink_base/left_side_1" → "left_side", "shelf_2" → "shelf"
-fn strip_nesting_id(id: &str) -> String {
-    // Strip cabinet prefix if present (e.g., "sink_base/left_side" → "left_side")
-    let label = if let Some(slash) = id.find('/') {
-        &id[slash + 1..]
-    } else {
-        id
-    };
-
-    // Strip quantity suffix (e.g., "shelf_2" → "shelf")
-    if let Some(last_underscore) = label.rfind('_') {
-        let suffix = &label[last_underscore + 1..];
-        if suffix.parse::<u32>().is_ok() {
-            return label[..last_underscore].to_string();
-        }
-    }
-    label.to_string()
-}
-
 /// Create a filesystem-safe slug from a material name.
 fn slugify(name: &str) -> String {
     name.chars()
@@ -760,9 +417,9 @@ fn slugify(name: &str) -> String {
 }
 
 fn write_cutlist(
-    output_dir: &PathBuf,
+    output_dir: &Path,
     project: &Project,
-    parts: &[&TaggedPart],
+    parts: &[&cm_cabinet::project::TaggedPart],
     nesting_result: &cm_nesting::packer::NestingResult,
     material_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -785,7 +442,7 @@ fn write_cutlist(
         ));
     }
 
-    cutlist.push_str(&format!("\nNesting Layout:\n"));
+    cutlist.push_str("\nNesting Layout:\n");
     for sheet in &nesting_result.sheets {
         cutlist.push_str(&format!("  Sheet {} ({:.1}% utilization):\n", sheet.sheet_index + 1, sheet.utilization));
         for placed in &sheet.parts {
@@ -803,9 +460,9 @@ fn write_cutlist(
 
 /// Export CSV cut list (spreadsheet-friendly).
 fn write_csv(
-    output_dir: &PathBuf,
+    output_dir: &Path,
     project: &Project,
-    parts: &[&TaggedPart],
+    parts: &[&cm_cabinet::project::TaggedPart],
     material_name: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let csv_path = output_dir.join("cutlist.csv");
@@ -862,7 +519,7 @@ fn csv_escape(s: &str) -> String {
 
 /// Export SVG nesting layout for visual verification.
 fn write_svg(
-    output_dir: &PathBuf,
+    output_dir: &Path,
     nesting_result: &cm_nesting::packer::NestingResult,
     config: &NestingConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -909,4 +566,3 @@ fn write_svg(
     }
     Ok(())
 }
-

@@ -1,0 +1,173 @@
+# L-Shaped Kitchen Set
+# 7 cabinets: corner base + 2 base runs + sink base + 3 wall cabinets
+# Typical 10' x 8' L-shaped layout.
+
+[project]
+name = "L-Shaped Kitchen"
+units = "inches"
+
+[[materials]]
+name = "3/4\" Maple Plywood"
+thickness = 0.75
+sheet_width = 48.0
+sheet_length = 96.0
+material_type = "plywood"
+
+[[materials]]
+name = "1/4\" Maple Plywood"
+thickness = 0.25
+sheet_width = 48.0
+sheet_length = 96.0
+material_type = "plywood"
+
+# --- Base run (long wall, left to right) ---
+
+[[cabinets]]
+name = "corner_base"
+cabinet_type = "corner_cabinet"
+width = 36.0
+height = 34.5
+depth = 36.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 1
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+corner_type = "diagonal"
+material_ref = "3/4\" Maple Plywood"
+back_material_ref = "1/4\" Maple Plywood"
+
+[cabinets.toe_kick]
+height = 4.0
+setback = 3.0
+
+[[cabinets]]
+name = "sink_base"
+cabinet_type = "sink_base"
+width = 36.0
+height = 34.5
+depth = 24.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 0
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+material_ref = "3/4\" Maple Plywood"
+back_material_ref = "1/4\" Maple Plywood"
+
+[cabinets.toe_kick]
+height = 4.0
+setback = 3.0
+
+[cabinets.stretchers]
+front_width = 4.0
+has_rear = true
+
+[[cabinets]]
+name = "base_right"
+cabinet_type = "base_cabinet"
+width = 24.0
+height = 34.5
+depth = 24.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 1
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+material_ref = "3/4\" Maple Plywood"
+back_material_ref = "1/4\" Maple Plywood"
+
+[cabinets.toe_kick]
+height = 4.0
+setback = 3.0
+
+# --- Short wall base run ---
+
+[[cabinets]]
+name = "drawer_bank"
+cabinet_type = "drawer_bank"
+width = 18.0
+height = 34.5
+depth = 24.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 0
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+material_ref = "3/4\" Maple Plywood"
+back_material_ref = "1/4\" Maple Plywood"
+
+[cabinets.toe_kick]
+height = 4.0
+setback = 3.0
+
+[cabinets.drawers]
+count = 4
+opening_height = 0.0
+slide_clearance = 0.5
+
+# --- Wall cabinets (above long wall) ---
+
+[[cabinets]]
+name = "wall_left"
+cabinet_type = "wall_cabinet"
+width = 36.0
+height = 30.0
+depth = 12.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 2
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+material_ref = "3/4\" Maple Plywood"
+back_material_ref = "1/4\" Maple Plywood"
+
+[[cabinets]]
+name = "wall_center"
+cabinet_type = "wall_cabinet"
+width = 30.0
+height = 30.0
+depth = 12.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 2
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+material_ref = "3/4\" Maple Plywood"
+back_material_ref = "1/4\" Maple Plywood"
+
+[[cabinets]]
+name = "wall_right"
+cabinet_type = "wall_cabinet"
+width = 24.0
+height = 30.0
+depth = 12.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 2
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+material_ref = "3/4\" Maple Plywood"
+back_material_ref = "1/4\" Maple Plywood"
+
+[[tools]]
+number = 1
+tool_type = "endmill"
+diameter = 0.25
+flutes = 2
+cutting_length = 1.0
+description = "1/4\" 2-flute upcut endmill"

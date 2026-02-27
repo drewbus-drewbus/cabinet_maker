@@ -9,7 +9,9 @@ members = [
     "crates/cm-import",
     "crates/cm-joinery",
     "crates/cm-hardware",
+    "crates/cm-pipeline",
     "crates/cm-cli",
+    "crates/cm-server",
 ]
 
 # cm-ui is excluded from the workspace because Tauri requires system libraries
@@ -33,6 +35,7 @@ cm-nesting = { path = "crates/cm-nesting" }
 cm-import = { path = "crates/cm-import" }
 cm-joinery = { path = "crates/cm-joinery" }
 cm-hardware = { path = "crates/cm-hardware" }
+cm-pipeline = { path = "crates/cm-pipeline" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 thiserror = "2"

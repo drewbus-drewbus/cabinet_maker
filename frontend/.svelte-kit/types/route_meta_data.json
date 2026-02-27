@@ -1,0 +1,27 @@
+{
+	"/": [
+		"src/routes/+layout.ts",
+		"src/routes/+layout.ts"
+	],
+	"/cabinets": [
+		"src/routes/+layout.ts"
+	],
+	"/cutlist": [
+		"src/routes/+layout.ts"
+	],
+	"/generate": [
+		"src/routes/+layout.ts"
+	],
+	"/materials": [
+		"src/routes/+layout.ts"
+	],
+	"/nesting": [
+		"src/routes/+layout.ts"
+	],
+	"/preview": [
+		"src/routes/+layout.ts"
+	],
+	"/project": [
+		"src/routes/+layout.ts"
+	]
+}

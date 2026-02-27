@@ -1,0 +1,96 @@
+# Workshop Storage Set
+# 3 cabinets: tall pantry + drawer bank + wall cabinet.
+# Garage/workshop storage with heavy-duty plywood.
+
+[project]
+name = "Workshop Storage"
+units = "inches"
+
+[[materials]]
+name = "3/4\" Baltic Birch Plywood"
+thickness = 0.75
+sheet_width = 48.0
+sheet_length = 96.0
+material_type = "plywood"
+
+[[materials]]
+name = "1/4\" Baltic Birch Plywood"
+thickness = 0.25
+sheet_width = 48.0
+sheet_length = 96.0
+material_type = "plywood"
+
+# --- Tall storage cabinet ---
+
+[[cabinets]]
+name = "tall_storage"
+cabinet_type = "tall_cabinet"
+width = 24.0
+height = 84.0
+depth = 24.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 4
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+material_ref = "3/4\" Baltic Birch Plywood"
+back_material_ref = "1/4\" Baltic Birch Plywood"
+
+[cabinets.toe_kick]
+height = 4.0
+setback = 3.0
+
+# --- Drawer bank for small tools/hardware ---
+
+[[cabinets]]
+name = "tool_drawers"
+cabinet_type = "drawer_bank"
+width = 24.0
+height = 34.5
+depth = 24.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 0
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+material_ref = "3/4\" Baltic Birch Plywood"
+back_material_ref = "1/4\" Baltic Birch Plywood"
+
+[cabinets.toe_kick]
+height = 4.0
+setback = 3.0
+
+[cabinets.drawers]
+count = 5
+opening_height = 0.0
+slide_clearance = 0.5
+
+# --- Wall cabinet above workbench ---
+
+[[cabinets]]
+name = "wall_storage"
+cabinet_type = "wall_cabinet"
+width = 36.0
+height = 24.0
+depth = 12.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 1
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+material_ref = "3/4\" Baltic Birch Plywood"
+back_material_ref = "1/4\" Baltic Birch Plywood"
+
+[[tools]]
+number = 1
+tool_type = "endmill"
+diameter = 0.25
+flutes = 2
+cutting_length = 1.0
+description = "1/4\" 2-flute upcut endmill"

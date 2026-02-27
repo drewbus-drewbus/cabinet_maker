@@ -10,5 +10,6 @@ pub use ops::{
     generate_dovetail_toolpath, generate_box_joint_toolpath, generate_mortise_toolpath,
     generate_tenon_toolpath, generate_dowel_holes,
     RabbetEdge, DovetailEdge, DrillHole, CamConfig,
+    DadoParams, ShelfPinParams, DovetailParams, BoxJointParams, MortiseParams, TenonParams,
 };
 pub use error::CamError;

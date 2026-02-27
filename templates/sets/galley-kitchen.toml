@@ -1,0 +1,149 @@
+# Galley Kitchen Set
+# 6 cabinets: parallel base + wall runs on two walls.
+# Typical 12' galley with sink on one side, range on the other.
+
+[project]
+name = "Galley Kitchen"
+units = "inches"
+
+[[materials]]
+name = "3/4\" Birch Plywood"
+thickness = 0.75
+sheet_width = 48.0
+sheet_length = 96.0
+material_type = "plywood"
+
+[[materials]]
+name = "1/4\" Birch Plywood"
+thickness = 0.25
+sheet_width = 48.0
+sheet_length = 96.0
+material_type = "plywood"
+
+# --- Wall A (sink side) ---
+
+[[cabinets]]
+name = "sink_base"
+cabinet_type = "sink_base"
+width = 36.0
+height = 34.5
+depth = 24.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 0
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+material_ref = "3/4\" Birch Plywood"
+back_material_ref = "1/4\" Birch Plywood"
+
+[cabinets.toe_kick]
+height = 4.0
+setback = 3.0
+
+[cabinets.stretchers]
+front_width = 4.0
+has_rear = true
+
+[[cabinets]]
+name = "base_a1"
+cabinet_type = "base_cabinet"
+width = 30.0
+height = 34.5
+depth = 24.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 1
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+material_ref = "3/4\" Birch Plywood"
+back_material_ref = "1/4\" Birch Plywood"
+
+[cabinets.toe_kick]
+height = 4.0
+setback = 3.0
+
+[[cabinets]]
+name = "wall_a1"
+cabinet_type = "wall_cabinet"
+width = 30.0
+height = 30.0
+depth = 12.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 2
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+material_ref = "3/4\" Birch Plywood"
+back_material_ref = "1/4\" Birch Plywood"
+
+# --- Wall B (opposite) ---
+
+[[cabinets]]
+name = "base_b1"
+cabinet_type = "base_cabinet"
+width = 24.0
+height = 34.5
+depth = 24.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 1
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+material_ref = "3/4\" Birch Plywood"
+back_material_ref = "1/4\" Birch Plywood"
+
+[cabinets.toe_kick]
+height = 4.0
+setback = 3.0
+
+[[cabinets]]
+name = "base_b2"
+cabinet_type = "base_cabinet"
+width = 24.0
+height = 34.5
+depth = 24.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 1
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+material_ref = "3/4\" Birch Plywood"
+back_material_ref = "1/4\" Birch Plywood"
+
+[cabinets.toe_kick]
+height = 4.0
+setback = 3.0
+
+[[cabinets]]
+name = "wall_b1"
+cabinet_type = "wall_cabinet"
+width = 36.0
+height = 36.0
+depth = 12.0
+material_thickness = 0.75
+back_thickness = 0.25
+shelf_count = 2
+shelf_joinery = "dado"
+dado_depth_fraction = 0.5
+has_back = true
+back_joinery = "rabbet"
+material_ref = "3/4\" Birch Plywood"
+back_material_ref = "1/4\" Birch Plywood"
+
+[[tools]]
+number = 1
+tool_type = "endmill"
+diameter = 0.25
+flutes = 2
+cutting_length = 1.0
+description = "1/4\" 2-flute upcut endmill"

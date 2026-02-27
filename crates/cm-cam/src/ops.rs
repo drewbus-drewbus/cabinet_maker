@@ -43,6 +43,63 @@ impl Default for CamConfig {
     }
 }
 
+/// Parameters for a dado (groove) cut.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DadoParams {
+    pub position: f64,
+    pub width: f64,
+    pub depth: f64,
+    pub horizontal: bool,
+}
+
+/// Parameters for shelf pin hole pattern.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShelfPinParams {
+    pub hole_depth: f64,
+    pub setback: f64,
+    pub start_height: f64,
+    pub end_height: f64,
+}
+
+/// Parameters for a dovetail joint cut.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DovetailParams {
+    pub edge: DovetailEdge,
+    pub tail_count: u32,
+    pub tail_width: f64,
+    pub pin_width: f64,
+    pub depth: f64,
+}
+
+/// Parameters for a box (finger) joint cut.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BoxJointParams {
+    pub edge: DovetailEdge,
+    pub finger_width: f64,
+    pub finger_count: u32,
+    pub depth: f64,
+}
+
+/// Parameters for a mortise cut.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MortiseParams {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub length: f64,
+    pub depth: f64,
+}
+
+/// Parameters for a tenon cut.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TenonParams {
+    pub edge: DovetailEdge,
+    pub tenon_thickness: f64,
+    pub tenon_width: f64,
+    pub tenon_length: f64,
+    pub shoulder_depth: f64,
+}
+
 /// Generate a profile (outline) cut for a rectangular part with hold-down tabs.
 ///
 /// The tool cuts around the outside of the rectangle, offsetting by the tool
@@ -318,10 +375,7 @@ fn emit_side_with_tabs(
 /// - `horizontal`: If true, dado runs along X; if false, along Y.
 pub fn generate_dado_toolpath(
     part_rect: &Rect,
-    dado_position: f64,
-    dado_width: f64,
-    dado_depth: f64,
-    horizontal: bool,
+    dado: &DadoParams,
     tool: &Tool,
     rpm: f64,
     config: &CamConfig,
@@ -329,6 +383,10 @@ pub fn generate_dado_toolpath(
     let feed_rate = tool.recommended_feed_rate(rpm);
     let plunge_rate = feed_rate * 0.5;
     let r = tool.radius();
+    let dado_position = dado.position;
+    let dado_width = dado.width;
+    let dado_depth = dado.depth;
+    let horizontal = dado.horizontal;
 
     let num_passes = (dado_depth / config.depth_per_pass).ceil() as u32;
     let num_width_passes_est = (dado_width / tool.diameter).ceil() as usize;
@@ -738,10 +796,7 @@ pub struct DrillHole {
 /// - `end_height`: Height to stop holes.
 pub fn generate_shelf_pin_pattern(
     panel_rect: &Rect,
-    hole_depth: f64,
-    setback: f64,
-    start_height: f64,
-    end_height: f64,
+    params: &ShelfPinParams,
     tool: &Tool,
     rpm: f64,
     config: &CamConfig,
@@ -750,23 +805,23 @@ pub fn generate_shelf_pin_pattern(
     let mut holes = Vec::new();
 
     // Front column
-    let front_x = panel_rect.min_x() + setback;
+    let front_x = panel_rect.min_x() + params.setback;
     // Back column
-    let back_x = panel_rect.max_x() - setback;
+    let back_x = panel_rect.max_x() - params.setback;
 
-    let mut y = panel_rect.min_y() + start_height;
-    let y_end = panel_rect.min_y() + end_height;
+    let mut y = panel_rect.min_y() + params.start_height;
+    let y_end = panel_rect.min_y() + params.end_height;
 
     while y <= y_end {
         holes.push(DrillHole {
             x: front_x,
             y,
-            depth: hole_depth,
+            depth: params.hole_depth,
         });
         holes.push(DrillHole {
             x: back_x,
             y,
-            depth: hole_depth,
+            depth: params.hole_depth,
         });
         y += spacing;
     }
@@ -848,11 +903,7 @@ pub fn generate_drill(
 /// angle is formed by the shoulder cuts.
 pub fn generate_dovetail_toolpath(
     part_rect: &Rect,
-    edge: DovetailEdge,
-    tail_count: u32,
-    tail_width: f64,
-    pin_width: f64,
-    depth: f64,
+    params: &DovetailParams,
     tool: &Tool,
     rpm: f64,
     config: &CamConfig,
@@ -860,6 +911,11 @@ pub fn generate_dovetail_toolpath(
     let feed_rate = tool.recommended_feed_rate(rpm);
     let plunge_rate = feed_rate * 0.5;
     let r = tool.radius();
+    let edge = params.edge;
+    let tail_count = params.tail_count;
+    let tail_width = params.tail_width;
+    let pin_width = params.pin_width;
+    let depth = params.depth;
 
     let num_passes = (depth / config.depth_per_pass).ceil() as u32;
     let mut segments = Vec::with_capacity(tail_count as usize * num_passes as usize * 10 + 4);
@@ -1007,10 +1063,7 @@ pub enum DovetailEdge {
 /// Each slot is cut like a narrow dado at the edge of the part.
 pub fn generate_box_joint_toolpath(
     part_rect: &Rect,
-    edge: DovetailEdge,
-    finger_width: f64,
-    finger_count: u32,
-    depth: f64,
+    params: &BoxJointParams,
     tool: &Tool,
     rpm: f64,
     config: &CamConfig,
@@ -1018,6 +1071,10 @@ pub fn generate_box_joint_toolpath(
     let feed_rate = tool.recommended_feed_rate(rpm);
     let plunge_rate = feed_rate * 0.5;
     let r = tool.radius();
+    let edge = params.edge;
+    let finger_width = params.finger_width;
+    let finger_count = params.finger_count;
+    let depth = params.depth;
 
     let num_passes = (depth / config.depth_per_pass).ceil() as u32;
     let mut segments = Vec::with_capacity(finger_count as usize * num_passes as usize * 6 + 4);
@@ -1130,11 +1187,7 @@ pub fn generate_box_joint_toolpath(
 /// and XY ramping for plunge entry.
 pub fn generate_mortise_toolpath(
     part_rect: &Rect,
-    mortise_x: f64,
-    mortise_y: f64,
-    mortise_width: f64,
-    mortise_length: f64,
-    mortise_depth: f64,
+    params: &MortiseParams,
     tool: &Tool,
     rpm: f64,
     config: &CamConfig,
@@ -1142,6 +1195,11 @@ pub fn generate_mortise_toolpath(
     let feed_rate = tool.recommended_feed_rate(rpm);
     let plunge_rate = feed_rate * 0.5;
     let r = tool.radius();
+    let mortise_x = params.x;
+    let mortise_y = params.y;
+    let mortise_width = params.width;
+    let mortise_length = params.length;
+    let mortise_depth = params.depth;
 
     let num_passes = (mortise_depth / config.depth_per_pass).ceil() as u32;
     let mut segments = Vec::with_capacity(num_passes as usize * 8 + 4);
@@ -1243,11 +1301,7 @@ pub fn generate_mortise_toolpath(
 /// leaving the protruding tongue.
 pub fn generate_tenon_toolpath(
     part_rect: &Rect,
-    edge: DovetailEdge,
-    _tenon_thickness: f64,
-    tenon_width: f64,
-    tenon_length: f64,
-    shoulder_depth: f64,
+    params: &TenonParams,
     tool: &Tool,
     rpm: f64,
     config: &CamConfig,
@@ -1255,6 +1309,11 @@ pub fn generate_tenon_toolpath(
     let feed_rate = tool.recommended_feed_rate(rpm);
     let plunge_rate = feed_rate * 0.5;
     let r = tool.radius();
+    let edge = params.edge;
+    let _tenon_thickness = params.tenon_thickness;
+    let tenon_width = params.tenon_width;
+    let tenon_length = params.tenon_length;
+    let shoulder_depth = params.shoulder_depth;
 
     let num_passes = (shoulder_depth / config.depth_per_pass).ceil() as u32;
     let mut segments = Vec::with_capacity(num_passes as usize * 16 + 4);
@@ -1499,7 +1558,7 @@ mod tests {
         let rect = Rect::from_dimensions(12.0, 30.0);
         let tool = Tool::quarter_inch_endmill();
         let config = CamConfig::default();
-        let tp = generate_dado_toolpath(&rect, 10.0, 0.75, 0.375, true, &tool, 5000.0, &config);
+        let tp = generate_dado_toolpath(&rect, &DadoParams { position: 10.0, width: 0.75, depth: 0.375, horizontal: true }, &tool, 5000.0, &config);
 
         assert!(!tp.segments.is_empty());
 
@@ -1594,7 +1653,7 @@ mod tests {
         let tool = Tool::quarter_inch_endmill();
         let config = CamConfig::default();
         let tp = generate_shelf_pin_pattern(
-            &rect, 0.5, 2.0, 3.0, 27.0, &tool, 5000.0, &config,
+            &rect, &ShelfPinParams { hole_depth: 0.5, setback: 2.0, start_height: 3.0, end_height: 27.0 }, &tool, 5000.0, &config,
         );
 
         assert!(!tp.segments.is_empty());
@@ -1724,7 +1783,7 @@ mod tests {
         let tool = Tool::quarter_inch_endmill();
         let config = CamConfig::default();
         let tp = generate_dovetail_toolpath(
-            &rect, DovetailEdge::Bottom, 3, 0.5, 0.25, 0.75,
+            &rect, &DovetailParams { edge: DovetailEdge::Bottom, tail_count: 3, tail_width: 0.5, pin_width: 0.25, depth: 0.75 },
             &tool, 5000.0, &config,
         );
         assert!(!tp.segments.is_empty());
@@ -1741,7 +1800,7 @@ mod tests {
         let tool = Tool::quarter_inch_endmill();
         let config = CamConfig::default();
         let tp = generate_dovetail_toolpath(
-            &rect, DovetailEdge::Left, 2, 0.6, 0.3, 0.5,
+            &rect, &DovetailParams { edge: DovetailEdge::Left, tail_count: 2, tail_width: 0.6, pin_width: 0.3, depth: 0.5 },
             &tool, 5000.0, &config,
         );
         let deepest = tp.segments.iter().map(|s| s.z).min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
@@ -1754,7 +1813,7 @@ mod tests {
         let tool = Tool::quarter_inch_endmill();
         let config = CamConfig::default();
         let tp = generate_box_joint_toolpath(
-            &rect, DovetailEdge::Bottom, 0.5, 8, 0.75,
+            &rect, &BoxJointParams { edge: DovetailEdge::Bottom, finger_width: 0.5, finger_count: 8, depth: 0.75 },
             &tool, 5000.0, &config,
         );
         assert!(!tp.segments.is_empty());
@@ -1769,7 +1828,7 @@ mod tests {
         let tool = Tool::quarter_inch_endmill();
         let config = CamConfig::default();
         let tp = generate_mortise_toolpath(
-            &rect, 1.0, 2.0, 0.375, 1.0, 0.75,
+            &rect, &MortiseParams { x: 1.0, y: 2.0, width: 0.375, length: 1.0, depth: 0.75 },
             &tool, 5000.0, &config,
         );
         assert!(!tp.segments.is_empty());
@@ -1783,7 +1842,7 @@ mod tests {
         let tool = Tool::quarter_inch_endmill();
         let config = CamConfig::default();
         let tp = generate_mortise_toolpath(
-            &rect, 3.0, 2.0, 0.5, 1.5, 1.0,
+            &rect, &MortiseParams { x: 3.0, y: 2.0, width: 0.5, length: 1.5, depth: 1.0 },
             &tool, 5000.0, &config,
         );
         // Verify all cutting moves are within the part bounds
@@ -1801,7 +1860,7 @@ mod tests {
         let tool = Tool::quarter_inch_endmill();
         let config = CamConfig::default();
         let tp = generate_tenon_toolpath(
-            &rect, DovetailEdge::Left, 0.375, 1.0, 1.0, 0.25,
+            &rect, &TenonParams { edge: DovetailEdge::Left, tenon_thickness: 0.375, tenon_width: 1.0, tenon_length: 1.0, shoulder_depth: 0.25 },
             &tool, 5000.0, &config,
         );
         assert!(!tp.segments.is_empty());
@@ -1838,7 +1897,7 @@ mod tests {
 
         for edge in [DovetailEdge::Top, DovetailEdge::Bottom, DovetailEdge::Left, DovetailEdge::Right] {
             let tp = generate_dovetail_toolpath(
-                &rect, edge, 3, 0.5, 0.25, 0.75,
+                &rect, &DovetailParams { edge, tail_count: 3, tail_width: 0.5, pin_width: 0.25, depth: 0.75 },
                 &tool, 5000.0, &config,
             );
             assert!(!tp.segments.is_empty(), "dovetail on {:?} should produce segments", edge);
@@ -1856,7 +1915,7 @@ mod tests {
         let tool = Tool::quarter_inch_endmill();
         let config = CamConfig::default();
         let tp = generate_dovetail_toolpath(
-            &rect, DovetailEdge::Bottom, 1, 1.0, 0.5, 0.5,
+            &rect, &DovetailParams { edge: DovetailEdge::Bottom, tail_count: 1, tail_width: 1.0, pin_width: 0.5, depth: 0.5 },
             &tool, 5000.0, &config,
         );
         assert!(!tp.segments.is_empty());
@@ -1870,7 +1929,7 @@ mod tests {
         let tool = Tool::quarter_inch_endmill();
         let config = CamConfig::default();
         let tp = generate_dovetail_toolpath(
-            &rect, DovetailEdge::Bottom, 10, 0.3, 0.15, 0.5,
+            &rect, &DovetailParams { edge: DovetailEdge::Bottom, tail_count: 10, tail_width: 0.3, pin_width: 0.15, depth: 0.5 },
             &tool, 5000.0, &config,
         );
         assert!(!tp.segments.is_empty());
@@ -1889,7 +1948,7 @@ mod tests {
         };
         // 1.0" depth with 0.25" per pass = 4 passes
         let tp = generate_dovetail_toolpath(
-            &rect, DovetailEdge::Bottom, 2, 0.5, 0.25, 1.0,
+            &rect, &DovetailParams { edge: DovetailEdge::Bottom, tail_count: 2, tail_width: 0.5, pin_width: 0.25, depth: 1.0 },
             &tool, 5000.0, &config,
         );
         // Verify multiple depth levels exist
@@ -1908,7 +1967,7 @@ mod tests {
 
         for edge in [DovetailEdge::Top, DovetailEdge::Bottom, DovetailEdge::Left, DovetailEdge::Right] {
             let tp = generate_box_joint_toolpath(
-                &rect, edge, 0.5, 8, 0.75,
+                &rect, &BoxJointParams { edge, finger_width: 0.5, finger_count: 8, depth: 0.75 },
                 &tool, 5000.0, &config,
             );
             assert!(!tp.segments.is_empty(), "box joint on {:?} should produce segments", edge);
@@ -1923,7 +1982,7 @@ mod tests {
         let tool = Tool::quarter_inch_endmill();
         let config = CamConfig::default();
         let tp = generate_box_joint_toolpath(
-            &rect, DovetailEdge::Bottom, 0.75, 2, 0.5,
+            &rect, &BoxJointParams { edge: DovetailEdge::Bottom, finger_width: 0.75, finger_count: 2, depth: 0.5 },
             &tool, 5000.0, &config,
         );
         assert!(!tp.segments.is_empty());
@@ -1939,7 +1998,7 @@ mod tests {
         let config = CamConfig::default();
         // 7 fingers: slots at 0, 2, 4, 6 = 4 slots
         let tp = generate_box_joint_toolpath(
-            &rect, DovetailEdge::Bottom, 0.25, 7, 0.5,
+            &rect, &BoxJointParams { edge: DovetailEdge::Bottom, finger_width: 0.25, finger_count: 7, depth: 0.5 },
             &tool, 5000.0, &config,
         );
         assert!(!tp.segments.is_empty());
@@ -1954,7 +2013,7 @@ mod tests {
         // Test mortise at various positions
         for (x, y) in [(1.0, 1.0), (3.0, 2.0), (5.0, 3.0)] {
             let tp = generate_mortise_toolpath(
-                &rect, x, y, 0.375, 1.0, 0.75,
+                &rect, &MortiseParams { x, y, width: 0.375, length: 1.0, depth: 0.75 },
                 &tool, 5000.0, &config,
             );
             for seg in &tp.segments {
@@ -1975,7 +2034,7 @@ mod tests {
         let tool = Tool::quarter_inch_endmill(); // 0.25" diameter
         let config = CamConfig::default();
         let tp = generate_mortise_toolpath(
-            &rect, 3.0, 2.0, 0.1, 0.1, 0.5, // tiny mortise
+            &rect, &MortiseParams { x: 3.0, y: 2.0, width: 0.1, length: 0.1, depth: 0.5 }, // tiny mortise
             &tool, 5000.0, &config,
         );
         // Should not panic, should still produce segments
@@ -1991,7 +2050,7 @@ mod tests {
             ..Default::default()
         };
         let tp = generate_mortise_toolpath(
-            &rect, 3.0, 2.0, 0.5, 1.5, 1.0,
+            &rect, &MortiseParams { x: 3.0, y: 2.0, width: 0.5, length: 1.5, depth: 1.0 },
             &tool, 5000.0, &config,
         );
         let deepest = tp.segments.iter().map(|s| s.z).min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
@@ -2013,7 +2072,7 @@ mod tests {
 
         for edge in [DovetailEdge::Top, DovetailEdge::Bottom, DovetailEdge::Left, DovetailEdge::Right] {
             let tp = generate_tenon_toolpath(
-                &rect, edge, 0.375, 1.0, 1.0, 0.25,
+                &rect, &TenonParams { edge, tenon_thickness: 0.375, tenon_width: 1.0, tenon_length: 1.0, shoulder_depth: 0.25 },
                 &tool, 5000.0, &config,
             );
             assert!(!tp.segments.is_empty(), "tenon on {:?} should produce segments", edge);
@@ -2028,7 +2087,7 @@ mod tests {
         let tool = Tool::quarter_inch_endmill();
         let config = CamConfig::default();
         let tp = generate_tenon_toolpath(
-            &rect, DovetailEdge::Left, 0.375, 1.0, 1.0, 0.5,
+            &rect, &TenonParams { edge: DovetailEdge::Left, tenon_thickness: 0.375, tenon_width: 1.0, tenon_length: 1.0, shoulder_depth: 0.5 },
             &tool, 5000.0, &config,
         );
         let deepest = tp.segments.iter().map(|s| s.z).min_by(|a, b| a.partial_cmp(b).unwrap()).unwrap();
@@ -2087,7 +2146,7 @@ mod tests {
         let config = CamConfig::default();
 
         // Dovetail
-        let tp = generate_dovetail_toolpath(&rect, DovetailEdge::Bottom, 3, 0.5, 0.25, 0.75, &tool, 5000.0, &config);
+        let tp = generate_dovetail_toolpath(&rect, &DovetailParams { edge: DovetailEdge::Bottom, tail_count: 3, tail_width: 0.5, pin_width: 0.25, depth: 0.75 }, &tool, 5000.0, &config);
         for seg in &tp.segments {
             if matches!(seg.motion, Motion::Rapid) {
                 assert!(seg.z >= 0.0, "dovetail rapid at z={}", seg.z);
@@ -2095,7 +2154,7 @@ mod tests {
         }
 
         // Box joint
-        let tp = generate_box_joint_toolpath(&rect, DovetailEdge::Bottom, 0.5, 6, 0.75, &tool, 5000.0, &config);
+        let tp = generate_box_joint_toolpath(&rect, &BoxJointParams { edge: DovetailEdge::Bottom, finger_width: 0.5, finger_count: 6, depth: 0.75 }, &tool, 5000.0, &config);
         for seg in &tp.segments {
             if matches!(seg.motion, Motion::Rapid) {
                 assert!(seg.z >= 0.0, "box joint rapid at z={}", seg.z);
@@ -2103,7 +2162,7 @@ mod tests {
         }
 
         // Mortise
-        let tp = generate_mortise_toolpath(&rect, 4.0, 3.0, 0.5, 1.5, 0.75, &tool, 5000.0, &config);
+        let tp = generate_mortise_toolpath(&rect, &MortiseParams { x: 4.0, y: 3.0, width: 0.5, length: 1.5, depth: 0.75 }, &tool, 5000.0, &config);
         for seg in &tp.segments {
             if matches!(seg.motion, Motion::Rapid) {
                 assert!(seg.z >= 0.0, "mortise rapid at z={}", seg.z);
@@ -2111,7 +2170,7 @@ mod tests {
         }
 
         // Tenon
-        let tp = generate_tenon_toolpath(&rect, DovetailEdge::Left, 0.375, 1.0, 1.0, 0.25, &tool, 5000.0, &config);
+        let tp = generate_tenon_toolpath(&rect, &TenonParams { edge: DovetailEdge::Left, tenon_thickness: 0.375, tenon_width: 1.0, tenon_length: 1.0, shoulder_depth: 0.25 }, &tool, 5000.0, &config);
         for seg in &tp.segments {
             if matches!(seg.motion, Motion::Rapid) {
                 assert!(seg.z >= 0.0, "tenon rapid at z={}", seg.z);

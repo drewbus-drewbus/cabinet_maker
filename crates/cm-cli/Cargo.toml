@@ -17,6 +17,7 @@ cm-post = { workspace = true }
 cm-nesting = { workspace = true }
 cm-import = { workspace = true }
 cm-hardware = { workspace = true }
+cm-pipeline = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 serde = { workspace = true }
 serde_json = "1"

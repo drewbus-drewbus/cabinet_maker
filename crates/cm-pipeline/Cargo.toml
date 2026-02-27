@@ -1,0 +1,17 @@
+[package]
+name = "cm-pipeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared pipeline logic: project generation, BOM, export, and estimation"
+
+[dependencies]
+cm-core = { workspace = true }
+cm-cabinet = { workspace = true }
+cm-cam = { workspace = true }
+cm-post = { workspace = true }
+cm-nesting = { workspace = true }
+cm-hardware = { workspace = true }
+serde = { workspace = true }
+serde_json = "1"
+thiserror = { workspace = true }

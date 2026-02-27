@@ -1072,7 +1072,7 @@ impl Cabinet {
 
         // Calculate divider positions
         let interior_height = top_y - bottom_y - mt; // space between top/bottom dados
-        let divider_count = if drawer.count > 1 { drawer.count - 1 } else { 0 };
+        let divider_count = drawer.count.saturating_sub(1);
         let divider_spacing = interior_height / drawer.count as f64;
         let divider_positions: Vec<f64> = (1..=divider_count)
             .map(|i| bottom_y + mt / 2.0 + divider_spacing * i as f64)

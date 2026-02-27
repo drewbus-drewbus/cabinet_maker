@@ -7,7 +7,7 @@ use cm_cabinet::project::Project;
 use cm_cabinet::part::{PartOperation, DadoOrientation};
 use cm_cam::ops::{
     generate_profile_cut, generate_dado_toolpath, generate_rabbet_toolpath,
-    generate_drill, CamConfig, RabbetEdge,
+    generate_drill, CamConfig, RabbetEdge, DadoParams,
 };
 use cm_cam::toolpath::Motion;
 use cm_core::geometry::Point2D;
@@ -136,8 +136,8 @@ fn test_full_pipeline_bookshelf() {
                 PartOperation::Dado(dado) => {
                     let horizontal = dado.orientation == DadoOrientation::Horizontal;
                     let tp = generate_dado_toolpath(
-                        &part.rect, dado.position, dado.width, dado.depth,
-                        horizontal, &tool, rpm, &cam_config,
+                        &part.rect, &DadoParams { position: dado.position, width: dado.width, depth: dado.depth, horizontal },
+                        &tool, rpm, &cam_config,
                     );
                     all_toolpaths.push(tp);
                 }
@@ -218,8 +218,8 @@ fn test_gcode_no_rapid_plunge() {
                 PartOperation::Dado(dado) => {
                     let horizontal = dado.orientation == DadoOrientation::Horizontal;
                     all_toolpaths.push(generate_dado_toolpath(
-                        &part.rect, dado.position, dado.width, dado.depth,
-                        horizontal, &tool, rpm, &cam_config,
+                        &part.rect, &DadoParams { position: dado.position, width: dado.width, depth: dado.depth, horizontal },
+                        &tool, rpm, &cam_config,
                     ));
                 }
                 PartOperation::Rabbet(rabbet) => {
@@ -321,8 +321,8 @@ fn test_dado_depths_match_specification() {
 
             // Generate toolpath and verify cut depth
             let tp = generate_dado_toolpath(
-                &left.rect, dado.position, dado.width, dado.depth,
-                true, &tool, 5000.0, &config,
+                &left.rect, &DadoParams { position: dado.position, width: dado.width, depth: dado.depth, horizontal: true },
+                &tool, 5000.0, &config,
             );
 
             let deepest = tp.segments.iter()
@@ -397,8 +397,8 @@ has_back = false
             if let PartOperation::Dado(dado) = op {
                 let horizontal = dado.orientation == DadoOrientation::Horizontal;
                 toolpaths.push(generate_dado_toolpath(
-                    &part.rect, dado.position, dado.width, dado.depth,
-                    horizontal, &tool, 5000.0, &config,
+                    &part.rect, &DadoParams { position: dado.position, width: dado.width, depth: dado.depth, horizontal },
+                    &tool, 5000.0, &config,
                 ));
             }
         }
@@ -540,8 +540,8 @@ description = "1/4\" endmill"
                 PartOperation::Dado(dado) => {
                     let horizontal = dado.orientation == DadoOrientation::Horizontal;
                     all_toolpaths.push(generate_dado_toolpath(
-                        &tp.part.rect, dado.position, dado.width, dado.depth,
-                        horizontal, &tool, rpm, &cam_config,
+                        &tp.part.rect, &DadoParams { position: dado.position, width: dado.width, depth: dado.depth, horizontal },
+                        &tool, rpm, &cam_config,
                     ));
                 }
                 PartOperation::Rabbet(rabbet) => {
@@ -685,6 +685,7 @@ fn test_advanced_joinery_cam_pipeline() {
         generate_dovetail_toolpath, generate_box_joint_toolpath,
         generate_mortise_toolpath, generate_tenon_toolpath,
         generate_dowel_holes, DovetailEdge,
+        DovetailParams, BoxJointParams, MortiseParams, TenonParams,
     };
     use cm_core::geometry::Rect;
 
@@ -695,19 +696,19 @@ fn test_advanced_joinery_cam_pipeline() {
 
     // Generate toolpaths for each new operation type
     let dovetail_tp = generate_dovetail_toolpath(
-        &rect, DovetailEdge::Bottom, 4, 0.5, 0.25, 0.75,
+        &rect, &DovetailParams { edge: DovetailEdge::Bottom, tail_count: 4, tail_width: 0.5, pin_width: 0.25, depth: 0.75 },
         &tool, 5000.0, &config,
     );
     let box_joint_tp = generate_box_joint_toolpath(
-        &rect, DovetailEdge::Bottom, 0.5, 8, 0.75,
+        &rect, &BoxJointParams { edge: DovetailEdge::Bottom, finger_width: 0.5, finger_count: 8, depth: 0.75 },
         &tool, 5000.0, &config,
     );
     let mortise_tp = generate_mortise_toolpath(
-        &rect, 3.0, 2.0, 0.375, 1.0, 0.75,
+        &rect, &MortiseParams { x: 3.0, y: 2.0, width: 0.375, length: 1.0, depth: 0.75 },
         &tool, 5000.0, &config,
     );
     let tenon_tp = generate_tenon_toolpath(
-        &rect, DovetailEdge::Left, 0.375, 1.0, 1.0, 0.25,
+        &rect, &TenonParams { edge: DovetailEdge::Left, tenon_thickness: 0.375, tenon_width: 1.0, tenon_length: 1.0, shoulder_depth: 0.25 },
         &tool, 5000.0, &config,
     );
     let dowel_tp = generate_dowel_holes(
@@ -811,4 +812,91 @@ description = "1/4\" endmill"
     assert!(gcode.contains("G20"));
     assert!(gcode.contains("M30"));
     assert!(gcode.lines().count() > 50, "multi-cabinet G-code should have substantial content");
+}
+
+// --- Kitchen Set Template Tests ---
+
+fn load_template(path: &str) -> Project {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let workspace_root = std::path::Path::new(manifest_dir).parent().unwrap().parent().unwrap();
+    let full_path = workspace_root.join(path);
+    let contents = std::fs::read_to_string(&full_path)
+        .unwrap_or_else(|e| panic!("Failed to read {}: {e}", full_path.display()));
+    Project::from_toml(&contents)
+        .unwrap_or_else(|e| panic!("Failed to parse {}: {e}", full_path.display()))
+}
+
+#[test]
+fn test_l_shaped_kitchen_template() {
+    let project = load_template("templates/sets/l-shaped-kitchen.toml");
+
+    assert_eq!(project.project.name, "L-Shaped Kitchen");
+    assert_eq!(project.cabinets.len(), 7);
+    assert_eq!(project.materials.len(), 2);
+
+    // Verify cabinet types
+    let names: Vec<&str> = project.cabinets.iter().map(|c| c.cabinet.name.as_str()).collect();
+    assert!(names.contains(&"corner_base"), "missing corner_base");
+    assert!(names.contains(&"sink_base"), "missing sink_base");
+    assert!(names.contains(&"drawer_bank"), "missing drawer_bank");
+
+    let tagged = project.generate_all_parts();
+    assert!(!tagged.is_empty(), "should generate parts");
+
+    // All 7 cabinets should contribute parts
+    let cabinet_names: std::collections::HashSet<&str> = tagged.iter().map(|t| t.cabinet_name.as_str()).collect();
+    assert_eq!(cabinet_names.len(), 7, "all 7 cabinets should have parts");
+}
+
+#[test]
+fn test_galley_kitchen_template() {
+    let project = load_template("templates/sets/galley-kitchen.toml");
+
+    assert_eq!(project.project.name, "Galley Kitchen");
+    assert_eq!(project.cabinets.len(), 6);
+    assert_eq!(project.materials.len(), 2);
+
+    let tagged = project.generate_all_parts();
+    assert!(!tagged.is_empty());
+
+    let cabinet_names: std::collections::HashSet<&str> = tagged.iter().map(|t| t.cabinet_name.as_str()).collect();
+    assert_eq!(cabinet_names.len(), 6, "all 6 cabinets should have parts");
+}
+
+#[test]
+fn test_bathroom_vanity_set_template() {
+    let project = load_template("templates/sets/bathroom-vanity-set.toml");
+
+    assert_eq!(project.project.name, "Bathroom Vanity Set");
+    assert_eq!(project.cabinets.len(), 2);
+    assert_eq!(project.materials.len(), 2);
+
+    // Check vanity has the right type
+    let vanity = project.cabinets.iter().find(|c| c.cabinet.name == "vanity").unwrap();
+    assert!(matches!(vanity.cabinet.cabinet_type, cm_cabinet::cabinet::CabinetType::VanityBase));
+
+    let tagged = project.generate_all_parts();
+    assert!(!tagged.is_empty());
+
+    let cabinet_names: std::collections::HashSet<&str> = tagged.iter().map(|t| t.cabinet_name.as_str()).collect();
+    assert_eq!(cabinet_names.len(), 2, "both cabinets should have parts");
+}
+
+#[test]
+fn test_workshop_storage_template() {
+    let project = load_template("templates/sets/workshop-storage.toml");
+
+    assert_eq!(project.project.name, "Workshop Storage");
+    assert_eq!(project.cabinets.len(), 3);
+    assert_eq!(project.materials.len(), 2);
+
+    // Verify tall cabinet exists
+    let tall = project.cabinets.iter().find(|c| c.cabinet.name == "tall_storage").unwrap();
+    assert_eq!(tall.cabinet.height, 84.0);
+
+    let tagged = project.generate_all_parts();
+    assert!(!tagged.is_empty());
+
+    let cabinet_names: std::collections::HashSet<&str> = tagged.iter().map(|t| t.cabinet_name.as_str()).collect();
+    assert_eq!(cabinet_names.len(), 3, "all 3 cabinets should have parts");
 }

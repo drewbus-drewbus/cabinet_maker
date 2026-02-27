@@ -149,10 +149,10 @@ impl Project {
     /// Resolve the material for a given cabinet entry.
     /// Falls back to the first available material.
     pub fn resolve_material(&self, entry: &CabinetEntry) -> Material {
-        if let Some(ref name) = entry.material_ref {
-            if let Some(m) = self.materials.iter().find(|m| m.name == *name) {
-                return m.clone();
-            }
+        if let Some(ref name) = entry.material_ref
+            && let Some(m) = self.materials.iter().find(|m| m.name == *name)
+        {
+            return m.clone();
         }
         // Fall back to first material in list, or legacy material
         self.materials
@@ -164,10 +164,10 @@ impl Project {
 
     /// Resolve the back material for a given cabinet entry.
     pub fn resolve_back_material(&self, entry: &CabinetEntry) -> Material {
-        if let Some(ref name) = entry.back_material_ref {
-            if let Some(m) = self.materials.iter().find(|m| m.name == *name) {
-                return m.clone();
-            }
+        if let Some(ref name) = entry.back_material_ref
+            && let Some(m) = self.materials.iter().find(|m| m.name == *name)
+        {
+            return m.clone();
         }
         // Fall back to legacy back_material or default
         self.back_material
